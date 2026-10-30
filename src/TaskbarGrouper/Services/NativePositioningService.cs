@@ -16,13 +16,49 @@ public static class NativePositioningService
     [DllImport("user32.dll")]
     public static extern bool GetCursorPos(out POINT lpPoint);
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+    private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    private const int DWMWCP_ROUND = 2;
+    private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+    private const int DWMSBT_TRANSIENTWINDOW = 3; // Acrylic
+
+    public static void ApplyWindows11AcrylicEffects(Window window)
+    {
+        try
+        {
+            var hwnd = new WindowInteropHelper(window).Handle;
+            if (hwnd == IntPtr.Zero) return;
+
+            int darkMode = 1;
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+
+            int cornerPref = DWMWCP_ROUND;
+            DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref cornerPref, sizeof(int));
+
+            int backdrop = DWMSBT_TRANSIENTWINDOW;
+            DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ref backdrop, sizeof(int));
+        }
+        catch
+        {
+            // Ignore on older OS versions
+        }
+    }
+
     /// <summary>
     /// Positions a WPF window directly above (or adjacent to) the Windows taskbar near the mouse cursor,
     /// respecting multi-monitor DPI and working area bounds.
     /// </summary>
-    public static void PositionNearTaskbarCursor(Window window)
+    public static void PositionNearTaskbarCursor(Window window, int? overrideCursorX = null, int? overrideCursorY = null)
     {
         GetCursorPos(out POINT cursor);
+        if (overrideCursorX is > 0 && overrideCursorY is > 0)
+        {
+            cursor.X = overrideCursorX.Value;
+            cursor.Y = overrideCursorY.Value;
+        }
 
         var screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(cursor.X, cursor.Y));
         var workArea = screen.WorkingArea;

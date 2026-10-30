@@ -1,7 +1,7 @@
 <Window x:Class="TaskbarGrouper.Views.FlyoutWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Group Flyout"
+        Title="StackBar Flyout"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
@@ -13,22 +13,37 @@
         Deactivated="Window_Deactivated"
         KeyDown="Window_KeyDown">
 
-    <Border Margin="12"
-            CornerRadius="12"
-            Background="{StaticResource FlyoutBackgroundBrush}"
-            BorderBrush="{StaticResource FlyoutBorderBrush}"
+    <Border x:Name="RootBorder"
+            Margin="14"
+            CornerRadius="16"
+            Background="#EE1B1C24"
+            BorderBrush="#38FFFFFF"
             BorderThickness="1"
-            Padding="14">
+            Padding="14"
+            RenderTransformOrigin="0.5,1.0"
+            Opacity="0">
+        <Border.RenderTransform>
+            <TransformGroup>
+                <ScaleTransform x:Name="PopupScale" ScaleX="0.92" ScaleY="0.92"/>
+                <TranslateTransform x:Name="PopupTranslate" Y="12"/>
+            </TransformGroup>
+        </Border.RenderTransform>
         <Border.Effect>
-            <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.45" Color="Black"/>
+            <DropShadowEffect BlurRadius="22" ShadowDepth="6" Opacity="0.55" Color="Black"/>
         </Border.Effect>
 
         <StackPanel>
-            <DockPanel Margin="4,0,4,10">
+            <DockPanel Margin="6,0,6,10">
+                <TextBlock x:Name="ItemCountBadge"
+                           DockPanel.Dock="Right"
+                           Text="0 apps"
+                           Foreground="#77FFFFFF"
+                           FontSize="11"
+                           VerticalAlignment="Center"/>
                 <TextBlock x:Name="GroupTitleText"
-                           Text="Group"
-                           Foreground="#E0FFFFFF"
-                           FontSize="13"
+                           Text="Stack"
+                           Foreground="#F0FFFFFF"
+                           FontSize="13.5"
                            FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
             </DockPanel>
@@ -36,41 +51,51 @@
             <ItemsControl x:Name="ItemsGrid">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <UniformGrid x:Name="UniformItemsPanel" Columns="4"/>
+                        <UniformGrid Columns="{Binding Columns}"/>
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <Button Click="ItemButton_Click"
                                 Tag="{Binding}"
-                                Width="76"
-                                Height="76"
-                                Margin="4"
+                                Width="80"
+                                Height="80"
+                                Margin="3"
                                 Background="Transparent"
                                 BorderThickness="0"
                                 Cursor="Hand"
                                 ToolTip="{Binding Name}">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Launch" Click="ContextLaunch_Click" CommandParameter="{Binding}"/>
+                                    <MenuItem Header="Run as Administrator" Click="ContextRunAdmin_Click" CommandParameter="{Binding}"/>
+                                    <MenuItem Header="Open File Location" Click="ContextOpenLocation_Click" CommandParameter="{Binding}"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
                                     <Border x:Name="ItemBorder"
-                                            CornerRadius="8"
+                                            CornerRadius="10"
                                             Background="Transparent"
                                             Padding="6">
                                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                            <Grid Width="32" Height="32" Margin="0,0,0,6">
+                                            <Grid Width="36" Height="36" Margin="0,0,0,6">
                                                 <Image Source="{Binding Icon}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                                             </Grid>
                                             <TextBlock Text="{Binding Name}"
-                                                       Foreground="White"
+                                                       Foreground="#F2FFFFFF"
                                                        FontSize="11"
                                                        TextAlignment="Center"
                                                        TextTrimming="CharacterEllipsis"
-                                                       MaxWidth="64"/>
+                                                       MaxWidth="68"/>
                                         </StackPanel>
                                     </Border>
                                     <ControlTemplate.Triggers>
                                         <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource ItemHoverBrush}"/>
+                                            <Setter TargetName="ItemBorder" Property="Background" Value="#28FFFFFF"/>
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="ItemBorder" Property="Background" Value="#40FFFFFF"/>
                                         </Trigger>
                                     </ControlTemplate.Triggers>
                                 </ControlTemplate>

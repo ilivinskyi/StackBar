@@ -12,7 +12,7 @@ public class ConfigService
     public ConfigService()
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var dir = Path.Combine(appData, "TaskbarGrouper");
+        var dir = Path.Combine(appData, "StackBar");
         Directory.CreateDirectory(dir);
         _configPath = Path.Combine(dir, "groups.json");
     }
