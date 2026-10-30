@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="StackBar Setup"
-        Width="490"
-        Height="360"
+        Width="500"
+        Height="420"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
         Icon="pack://application:,,,/Assets/app_icon.ico"
@@ -16,26 +16,53 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,18">
-            <Image Source="pack://application:,,,/Assets/app_icon.png" Width="54" Height="54" Margin="0,0,16,0" RenderOptions.BitmapScalingMode="HighQuality"/>
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
+            <Border Width="56" Height="56" CornerRadius="12" Background="#1D1F2B" BorderBrush="#33FFFFFF" BorderThickness="1" Margin="0,0,16,0" Padding="4">
+                <Image Source="pack://application:,,,/Assets/app_icon.png" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+            </Border>
             <StackPanel VerticalAlignment="Center">
-                <TextBlock Text="Install StackBar" FontSize="21" FontWeight="Bold" Foreground="White"/>
+                <TextBlock x:Name="SetupTitle" Text="Install StackBar" FontSize="21" FontWeight="Bold" Foreground="White"/>
                 <TextBlock Text="Native Taskbar Folder Studio for Windows" FontSize="12" Foreground="#99FFFFFF" Margin="0,3,0,0"/>
             </StackPanel>
         </StackPanel>
 
+        <!-- Options Card -->
         <Border Grid.Row="1" Background="#1D1F2B" CornerRadius="10" Padding="16" BorderBrush="#28FFFFFF" BorderThickness="1">
             <StackPanel VerticalAlignment="Center">
                 <CheckBox x:Name="DesktopShortcutCheck" Content="Create Desktop Shortcut" IsChecked="True" Foreground="#EEFFFFFF" FontSize="13" Margin="0,0,0,10"/>
                 <CheckBox x:Name="StartMenuCheck" Content="Create Start Menu Shortcut" IsChecked="True" Foreground="#EEFFFFFF" FontSize="13" Margin="0,0,0,10"/>
-                <CheckBox x:Name="StartupCheck" Content="Start StackBar in System Tray on Windows Login" IsChecked="True" Foreground="#EEFFFFFF" FontSize="13" Margin="0,0,0,14"/>
-                <TextBlock x:Name="StatusLabel" Text="Target directory: %LocalAppData%\Programs\StackBar" FontSize="11.5" Foreground="#88FFFFFF" TextTrimming="CharacterEllipsis"/>
+                <CheckBox x:Name="StartupCheck" Content="Start StackBar in System Tray on Windows Login" IsChecked="True" Foreground="#EEFFFFFF" FontSize="13" Margin="0,0,0,10"/>
+                <CheckBox x:Name="LaunchAfterCheck" Content="Launch StackBar immediately after installation" IsChecked="True" Foreground="#EEFFFFFF" FontSize="13" Margin="0,0,0,14"/>
+
+                <!-- Location Row -->
+                <Border Background="#151620" CornerRadius="6" Padding="10,8" BorderBrush="#1CFFFFFF" BorderThickness="1">
+                    <DockPanel>
+                        <Button x:Name="BrowseFolderBtn"
+                                DockPanel.Dock="Right"
+                                Content="Browse..."
+                                Click="BrowseFolder_Click"
+                                Padding="10,4"
+                                Background="#2A2C3C"
+                                Foreground="White"
+                                BorderThickness="0"
+                                Cursor="Hand"
+                                Margin="8,0,0,0"/>
+                        <TextBlock x:Name="StatusLabel"
+                                   Text="%LocalAppData%\Programs\StackBar"
+                                   FontSize="11.5"
+                                   Foreground="#AAFFFFFF"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                </Border>
             </StackPanel>
         </Border>
 
+        <!-- Actions -->
         <DockPanel Grid.Row="2" Margin="0,18,0,0">
             <Button x:Name="UninstallBtn"
-                    Content="Uninstall"
+                    Content="Uninstall..."
                     Click="Uninstall_Click"
                     Padding="14,8"
                     Background="#282A38"

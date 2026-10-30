@@ -9,7 +9,7 @@ namespace TaskbarGrouper.Views
 {
     public partial class SetupWindow : Window
     {
-        private readonly string _installDir;
+        private string _installDir;
 
         public SetupWindow()
         {
@@ -17,34 +17,70 @@ namespace TaskbarGrouper.Views
             _installDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Programs", "StackBar");
-            StatusLabel.Text = $"Target directory: {_installDir}";
+
+            StatusLabel.Text = _installDir;
+
+            // Check if already installed
+            string targetExe = Path.Combine(_installDir, "StackBar.exe");
+            if (File.Exists(targetExe))
+            {
+                SetupTitle.Text = "Update / Reinstall StackBar";
+                InstallBtn.Content = "Update StackBar";
+                UninstallBtn.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                SetupTitle.Text = "Install StackBar";
+                InstallBtn.Content = "Install & Launch";
+                UninstallBtn.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void BrowseFolder_Click(object sender, RoutedEventArgs e)
+        {
+            using (var fbd = new System.Windows.Forms.FolderBrowserDialog())
+            {
+                fbd.Description = "Select StackBar installation folder";
+                fbd.SelectedPath = _installDir;
+                if (fbd.ShowDialog() == System.Windows.Forms.DialogResult.OK && !string.IsNullOrWhiteSpace(fbd.SelectedPath))
+                {
+                    _installDir = fbd.SelectedPath;
+                    StatusLabel.Text = _installDir;
+                }
+            }
         }
 
         private void Install_Click(object sender, RoutedEventArgs e)
         {
             InstallBtn.IsEnabled = false;
-            StatusLabel.Text = "Installing StackBar...";
+            StatusLabel.Text = "Closing running instances...";
 
             try
             {
-                // Signal running instances to exit
+                // Graceful exit via IPC
                 IpcService.SendCommand("EXIT");
                 System.Threading.Thread.Sleep(300);
+
+                // Force terminate if any lingering
+                foreach (var proc in Process.GetProcessesByName("StackBar"))
+                {
+                    try { proc.Kill(); proc.WaitForExit(1000); } catch { }
+                }
 
                 Directory.CreateDirectory(_installDir);
                 string targetExe = Path.Combine(_installDir, "StackBar.exe");
 
-                // Self-copy current exe
+                // Copy self
                 string currentExe = AppInfo.ExePath;
                 if (!string.Equals(currentExe, targetExe, StringComparison.OrdinalIgnoreCase))
                 {
                     File.Copy(currentExe, targetExe, true);
                 }
 
-                // Copy config / setup shortcuts
                 bool createDesktop = DesktopShortcutCheck.IsChecked == true;
                 bool createStartMenu = StartMenuCheck.IsChecked == true;
                 bool runAtStartup = StartupCheck.IsChecked == true;
+                bool launchNow = LaunchAfterCheck.IsChecked == true;
 
                 if (createDesktop)
                 {
@@ -66,6 +102,7 @@ namespace TaskbarGrouper.Views
                         key?.DeleteValue("StackBar", false);
                 }
 
+                // Register in Windows "Installed apps"
                 using (var uninst = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\StackBar"))
                 {
                     uninst.SetValue("DisplayName", "StackBar — Taskbar Folder Studio");
@@ -78,8 +115,16 @@ namespace TaskbarGrouper.Views
                     uninst.SetValue("NoRepair", 1, RegistryValueKind.DWord);
                 }
 
-                StatusLabel.Text = "Complete! Launching StackBar...";
-                Process.Start(new ProcessStartInfo(targetExe) { UseShellExecute = true });
+                if (launchNow)
+                {
+                    StatusLabel.Text = "Launching StackBar...";
+                    Process.Start(new ProcessStartInfo(targetExe) { UseShellExecute = true });
+                }
+                else
+                {
+                    MessageBox.Show("StackBar installation was successful!", "StackBar Setup", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+
                 Close();
             }
             catch (Exception ex)
@@ -100,7 +145,7 @@ namespace TaskbarGrouper.Views
             try
             {
                 var result = MessageBox.Show(
-                    "Are you sure you want to uninstall StackBar?\n\nNote: If you have StackBar folders pinned to your taskbar, please unpin them manually.",
+                    "Are you sure you want to uninstall StackBar?\n\nNote: If you have StackBar folders pinned to your taskbar, please unpin them from your taskbar.",
                     "Uninstall StackBar",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
@@ -109,6 +154,11 @@ namespace TaskbarGrouper.Views
 
                 IpcService.SendCommand("EXIT");
                 System.Threading.Thread.Sleep(300);
+
+                foreach (var proc in Process.GetProcessesByName("StackBar"))
+                {
+                    try { proc.Kill(); proc.WaitForExit(1000); } catch { }
+                }
 
                 string installDir = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -127,15 +177,14 @@ namespace TaskbarGrouper.Views
 
                 Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\StackBar", false);
 
-                // Ask whether to delete data
-                var dataRes = MessageBox.Show("Do you want to delete your saved Stack folders and configurations?", "StackBar Data", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                var dataRes = MessageBox.Show("Do you also want to remove your saved StackBar configurations and custom folders?", "Delete Data", MessageBoxButton.YesNo, MessageBoxImage.Question);
                 if (dataRes == MessageBoxResult.Yes)
                 {
                     string appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StackBar");
                     if (Directory.Exists(appData)) Directory.Delete(appData, true);
                 }
 
-                // Delayed self-delete of install dir via cmd
+                // Self-deletion of install dir
                 if (Directory.Exists(installDir))
                 {
                     Process.Start(new ProcessStartInfo
@@ -147,7 +196,7 @@ namespace TaskbarGrouper.Views
                     });
                 }
 
-                MessageBox.Show("StackBar was successfully uninstalled.", "StackBar", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("StackBar has been completely uninstalled.", "StackBar", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
