@@ -1,0 +1,66 @@
+<Window x:Class="StackBar.Installer.InstallerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="StackBar Setup"
+        Width="480"
+        Height="350"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Icon="pack://application:,,,/Assets/app_icon.ico"
+        Background="#14151E"
+        Foreground="White">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,18">
+            <Image Source="pack://application:,,,/Assets/app_icon.png" Width="56" Height="56" Margin="0,0,16,0" RenderOptions.BitmapScalingMode="HighQuality"/>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Install StackBar" FontSize="22" FontWeight="Bold" Foreground="White"/>
+                <TextBlock Text="Taskbar Folder Studio for Windows 11" FontSize="12.5" Foreground="#99FFFFFF" Margin="0,3,0,0"/>
+            </StackPanel>
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="#1D1F2B" CornerRadius="10" Padding="16" BorderBrush="#28FFFFFF" BorderThickness="1">
+            <StackPanel VerticalAlignment="Center">
+                <CheckBox x:Name="DesktopShortcutCheck" Content="Create Desktop Shortcut" IsChecked="True" Foreground="#EEFFFFFF" FontSize="13" Margin="0,0,0,10"/>
+                <CheckBox x:Name="StartMenuCheck" Content="Create Start Menu Shortcut" IsChecked="True" Foreground="#EEFFFFFF" FontSize="13" Margin="0,0,0,10"/>
+                <CheckBox x:Name="StartupCheck" Content="Start StackBar in System Tray on Windows Login" IsChecked="True" Foreground="#EEFFFFFF" FontSize="13" Margin="0,0,0,14"/>
+                <TextBlock x:Name="StatusLabel" Text="Install location: %LocalAppData%\Programs\StackBar" FontSize="11.5" Foreground="#88FFFFFF" TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+        </Border>
+
+        <DockPanel Grid.Row="2" Margin="0,18,0,0">
+            <Button x:Name="UninstallBtn"
+                    Content="Uninstall"
+                    Click="Uninstall_Click"
+                    Padding="14,8"
+                    Background="#282A38"
+                    Foreground="#FF8080"
+                    BorderThickness="0"
+                    Cursor="Hand"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel"
+                        Click="Cancel_Click"
+                        Padding="16,8"
+                        Margin="0,0,8,0"
+                        Background="#282A38"
+                        Foreground="White"
+                        BorderThickness="0"
+                        Cursor="Hand"/>
+                <Button x:Name="InstallBtn"
+                        Content="Install &amp; Launch"
+                        Click="Install_Click"
+                        Padding="20,8"
+                        Background="#3A6DF0"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        BorderThickness="0"
+                        Cursor="Hand"/>
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

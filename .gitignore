@@ -36,7 +36,12 @@ bld/
 *.snupkg
 **/[Pp]ackages/*
 
-# Local testing / generated shortcuts
+# Local testing / generated shortcuts / build outputs
 dist/
 out/
+release/
+release-v2/
+installer/
+src/StackBar.Installer/Payload/
 *.lnk
+
