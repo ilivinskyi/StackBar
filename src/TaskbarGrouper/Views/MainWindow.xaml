@@ -156,6 +156,8 @@
                          BorderThickness="0"
                          Foreground="White"
                          HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
                          SelectionChanged="GroupsListBox_SelectionChanged">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
@@ -165,7 +167,7 @@
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="ItemBd" Background="#14151D" CornerRadius="10" Padding="10,8" BorderBrush="#18FFFFFF" BorderThickness="1">
+                                        <Border x:Name="ItemBd" Background="#14151D" CornerRadius="10" Padding="10,8" BorderBrush="#18FFFFFF" BorderThickness="1" RenderOptions.EdgeMode="Unspecified" SnapsToDevicePixels="False">
                                             <ContentPresenter/>
                                         </Border>
                                         <ControlTemplate.Triggers>
@@ -264,28 +266,37 @@
                                         </StackPanel>
                                     </Border>
                                 </Popup>
+                                <!-- Invisible target for the Windows emoji panel, which types into the focused text box -->
+                                <TextBox x:Name="EmojiCaptureBox" Width="1" Height="1" Opacity="0" IsTabStop="False"
+                                         BorderThickness="0" Background="Transparent" TextChanged="EmojiCaptureBox_TextChanged"/>
                             </StackPanel>
 
-                            <!-- Theme swatches -->
+                            <!-- Theme Swatches: 60-Color Palette Selector -->
                             <StackPanel Orientation="Horizontal" Margin="0,4,16,4" VerticalAlignment="Center">
                                 <TextBlock Text="Accent:" Foreground="#AAFFFFFF" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <RadioButton x:Name="ColorBlue" GroupName="AccentColor" Tag="#3A6DF0" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Ocean Blue">
-                                        <Border Width="16" Height="16" CornerRadius="8" Background="#3A6DF0"/>
-                                    </RadioButton>
-                                    <RadioButton x:Name="ColorPurple" GroupName="AccentColor" Tag="#8B5CF6" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Neon Purple">
-                                        <Border Width="16" Height="16" CornerRadius="8" Background="#8B5CF6"/>
-                                    </RadioButton>
-                                    <RadioButton x:Name="ColorEmerald" GroupName="AccentColor" Tag="#10B981" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Emerald Green">
-                                        <Border Width="16" Height="16" CornerRadius="8" Background="#10B981"/>
-                                    </RadioButton>
-                                    <RadioButton x:Name="ColorAmber" GroupName="AccentColor" Tag="#F59E0B" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Amber Orange">
-                                        <Border Width="16" Height="16" CornerRadius="8" Background="#F59E0B"/>
-                                    </RadioButton>
-                                    <RadioButton x:Name="ColorRed" GroupName="AccentColor" Tag="#EF4444" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Crimson Red">
-                                        <Border Width="16" Height="16" CornerRadius="8" Background="#EF4444"/>
-                                    </RadioButton>
-                                </StackPanel>
+                                <Button x:Name="AccentPickerBtn" Click="AccentPickerBtn_Click" Style="{StaticResource SurfaceBtn}" Padding="8,4" Cursor="Hand" ToolTip="Click to choose from 60 curated accent colors">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Border x:Name="SelectedAccentSwatch" Width="16" Height="16" CornerRadius="8" Background="#3A6DF0" BorderBrush="#33FFFFFF" BorderThickness="1" Margin="0,0,6,0"/>
+                                        <TextBlock x:Name="SelectedAccentHexText" Text="#3A6DF0" FontSize="11.5" Foreground="#EEFFFFFF" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                        <TextBlock Text="▾" FontSize="9" Foreground="#88FFFFFF" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Popup x:Name="AccentPickerPopup" StaysOpen="False" AllowsTransparency="True" PlacementTarget="{Binding ElementName=AccentPickerBtn}" Placement="Bottom">
+                                    <Border Background="#1C1E2A" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="10" Padding="12" Margin="4">
+                                        <Border.Effect>
+                                            <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.5" Color="Black"/>
+                                        </Border.Effect>
+                                        <StackPanel Width="290">
+                                            <DockPanel Margin="0,0,0,8">
+                                                <TextBlock Text="Accent Palette (60 Colors)" Foreground="#AAFFFFFF" FontSize="11.5" FontWeight="SemiBold"/>
+                                                <TextBlock x:Name="HoveredColorName" Text="" Foreground="#77FFFFFF" FontSize="11" HorizontalAlignment="Right"/>
+                                            </DockPanel>
+                                            <WrapPanel x:Name="AccentPalettePanel" Width="280">
+                                                <!-- Populated dynamically with 60 color buttons -->
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </Popup>
                             </StackPanel>
 
                             <!-- Icon Style Radio -->
@@ -346,8 +357,13 @@
                 </Border>
 
                 <!-- Bottom Bar -->
-                <DockPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
-                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                <Grid DockPanel.Dock="Bottom" Margin="0,14,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button Content="⚡ Import From Taskbar / System"
                                 Click="ImportTaskbar_Click"
                                 Style="{StaticResource SurfaceBtn}"
@@ -358,15 +374,17 @@
                                 Style="{StaticResource SurfaceBtn}"/>
                     </StackPanel>
 
-                    <TextBlock x:Name="StatusText"
+                    <TextBlock Grid.Column="1"
+                               x:Name="StatusText"
                                Text="Drag &amp; drop any .exe or .lnk files into the list, or import from taskbar."
                                FontSize="11.5"
                                Foreground="#88FFFFFF"
                                VerticalAlignment="Center"
                                HorizontalAlignment="Right"
-                               TextTrimming="CharacterEllipsis"
+                               TextWrapping="Wrap"
+                               TextAlignment="Right"
                                Margin="12,0,0,0"/>
-                </DockPanel>
+                </Grid>
 
                 <!-- List & Empty Overlay -->
                 <Grid>
@@ -376,6 +394,8 @@
                              BorderThickness="1"
                              Foreground="White"
                              HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
                              AllowDrop="True"
                              Drop="ItemsListBox_Drop">
                         <ListBox.ItemContainerStyle>
@@ -385,7 +405,7 @@
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListBoxItem">
-                                            <Border x:Name="RowBd" Background="#1B1D28" CornerRadius="8" Padding="10,7" BorderBrush="#16FFFFFF" BorderThickness="1">
+                                            <Border x:Name="RowBd" Background="#1B1D28" CornerRadius="8" Padding="10,7" BorderBrush="#16FFFFFF" BorderThickness="1" RenderOptions.EdgeMode="Unspecified" SnapsToDevicePixels="False">
                                                 <ContentPresenter/>
                                             </Border>
                                             <ControlTemplate.Triggers>

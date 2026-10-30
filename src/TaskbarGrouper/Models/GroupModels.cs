@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.Serialization;
 using System.Collections.Generic;
+using System.ComponentModel;
 
 namespace TaskbarGrouper.Models
 {
@@ -35,11 +36,11 @@ namespace TaskbarGrouper.Models
         [DataMember(Name = "groups", EmitDefaultValue = false)]
         public List<AppGroup> Groups { get; set; } = new List<AppGroup>();
 
-        // Fallback property mapping for legacy capital 'Groups'
+        // Fallback property mapping for legacy capital 'Groups' - only read, never emit duplicate
         [DataMember(Name = "Groups", EmitDefaultValue = false)]
-        internal List<AppGroup> LegacyGroups
+        internal List<AppGroup>? LegacyGroups
         {
-            get => Groups;
+            get => null;
             set { if (value != null && value.Count > 0) Groups = value; }
         }
 
@@ -51,69 +52,78 @@ namespace TaskbarGrouper.Models
     }
 
     [DataContract]
-    public class AppGroup
+    public class AppGroup : INotifyPropertyChanged
     {
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        /// <summary>Tells bound views (sidebar name, thumbnail) that the group's look changed.</summary>
+        public void NotifyAppearanceChanged()
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Name)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail)));
+        }
+
         [DataMember(Name = "id", EmitDefaultValue = false)]
         public string Id { get; set; } = Guid.NewGuid().ToString("N").Substring(0, 8);
 
         [DataMember(Name = "Id", EmitDefaultValue = false)]
-        internal string LegacyId { get => Id; set => Id = value; }
+        internal string? LegacyId { get => null; set { if (value != null) Id = value; } }
 
         [DataMember(Name = "name", EmitDefaultValue = false)]
         public string Name { get; set; } = "New Stack";
 
         [DataMember(Name = "Name", EmitDefaultValue = false)]
-        internal string LegacyName { get => Name; set => Name = value; }
+        internal string? LegacyName { get => null; set { if (value != null) Name = value; } }
 
         [DataMember(Name = "iconGlyph", EmitDefaultValue = false)]
         public string IconGlyph { get; set; } = "📁";
 
         [DataMember(Name = "IconGlyph", EmitDefaultValue = false)]
-        internal string LegacyIconGlyph { get => IconGlyph; set => IconGlyph = value; }
+        internal string? LegacyIconGlyph { get => null; set { if (value != null) IconGlyph = value; } }
 
-        [DataMember(Name = "iconMode", EmitDefaultValue = false)]
+        [DataMember(Name = "iconMode")]
         public FolderIconMode IconMode { get; set; } = FolderIconMode.MiniGrid2x2;
 
         [DataMember(Name = "IconMode", EmitDefaultValue = false)]
-        internal FolderIconMode LegacyIconMode { get => IconMode; set => IconMode = value; }
+        internal FolderIconMode? LegacyIconMode { get => null; set { if (value.HasValue) IconMode = value.Value; } }
 
         [DataMember(Name = "customFolderIconPath", EmitDefaultValue = false)]
         public string? CustomFolderIconPath { get; set; }
 
         [DataMember(Name = "CustomFolderIconPath", EmitDefaultValue = false)]
-        internal string? LegacyCustomFolderIconPath { get => CustomFolderIconPath; set => CustomFolderIconPath = value; }
+        internal string? LegacyCustomFolderIconPath { get => null; set { if (value != null) CustomFolderIconPath = value; } }
 
         [DataMember(Name = "accentColorHex", EmitDefaultValue = false)]
         public string AccentColorHex { get; set; } = "#3A6DF0";
 
         [DataMember(Name = "AccentColorHex", EmitDefaultValue = false)]
-        internal string LegacyAccentColorHex { get => AccentColorHex; set => AccentColorHex = value; }
+        internal string? LegacyAccentColorHex { get => null; set { if (value != null) AccentColorHex = value; } }
 
-        [DataMember(Name = "columns", EmitDefaultValue = false)]
+        [DataMember(Name = "columns")]
         public int Columns { get; set; } = 4;
 
         [DataMember(Name = "Columns", EmitDefaultValue = false)]
-        internal int LegacyColumns { get => Columns; set => Columns = value; }
+        internal int? LegacyColumns { get => null; set { if (value.HasValue) Columns = value.Value; } }
 
-        [DataMember(Name = "showLabels", EmitDefaultValue = false)]
+        [DataMember(Name = "showLabels")]
         public bool ShowLabels { get; set; } = true;
 
         [DataMember(Name = "ShowLabels", EmitDefaultValue = false)]
-        internal bool LegacyShowLabels { get => ShowLabels; set => ShowLabels = value; }
+        internal bool? LegacyShowLabels { get => null; set { if (value.HasValue) ShowLabels = value.Value; } }
 
-        [DataMember(Name = "closeOnLaunch", EmitDefaultValue = false)]
+        [DataMember(Name = "closeOnLaunch")]
         public bool CloseOnLaunch { get; set; } = true;
 
         [DataMember(Name = "CloseOnLaunch", EmitDefaultValue = false)]
-        internal bool LegacyCloseOnLaunch { get => CloseOnLaunch; set => CloseOnLaunch = value; }
+        internal bool? LegacyCloseOnLaunch { get => null; set { if (value.HasValue) CloseOnLaunch = value.Value; } }
 
         [DataMember(Name = "items", EmitDefaultValue = false)]
         public List<GroupItem> Items { get; set; } = new List<GroupItem>();
 
         [DataMember(Name = "Items", EmitDefaultValue = false)]
-        internal List<GroupItem> LegacyItems
+        internal List<GroupItem>? LegacyItems
         {
-            get => Items;
+            get => null;
             set { if (value != null) Items = value; }
         }
 
@@ -142,37 +152,45 @@ namespace TaskbarGrouper.Models
         public string Name { get; set; } = string.Empty;
 
         [DataMember(Name = "Name", EmitDefaultValue = false)]
-        internal string LegacyName { get => Name; set => Name = value; }
+        internal string? LegacyName { get => null; set { if (value != null) Name = value; } }
 
         [DataMember(Name = "targetPath", EmitDefaultValue = false)]
         public string TargetPath { get; set; } = string.Empty;
 
         [DataMember(Name = "TargetPath", EmitDefaultValue = false)]
-        internal string LegacyTargetPath { get => TargetPath; set => TargetPath = value; }
+        internal string? LegacyTargetPath { get => null; set { if (value != null) TargetPath = value; } }
 
         [DataMember(Name = "arguments", EmitDefaultValue = false)]
         public string Arguments { get; set; } = string.Empty;
 
         [DataMember(Name = "Arguments", EmitDefaultValue = false)]
-        internal string LegacyArguments { get => Arguments; set => Arguments = value; }
+        internal string? LegacyArguments { get => null; set { if (value != null) Arguments = value; } }
 
         [DataMember(Name = "workingDirectory", EmitDefaultValue = false)]
         public string WorkingDirectory { get; set; } = string.Empty;
 
         [DataMember(Name = "WorkingDirectory", EmitDefaultValue = false)]
-        internal string LegacyWorkingDirectory { get => WorkingDirectory; set => WorkingDirectory = value; }
+        internal string? LegacyWorkingDirectory { get => null; set { if (value != null) WorkingDirectory = value; } }
 
         [DataMember(Name = "customIconPath", EmitDefaultValue = false)]
         public string? CustomIconPath { get; set; }
 
         [DataMember(Name = "CustomIconPath", EmitDefaultValue = false)]
-        internal string? LegacyCustomIconPath { get => CustomIconPath; set => CustomIconPath = value; }
+        internal string? LegacyCustomIconPath { get => null; set { if (value != null) CustomIconPath = value; } }
 
-        [DataMember(Name = "kind", EmitDefaultValue = false)]
+        [DataMember(Name = "kind")]
         public ItemKind Kind { get; set; } = ItemKind.File;
 
+        /// <summary>Icon resource index inside CustomIconPath (e.g. shell32.dll,-16). 0 = first icon.</summary>
+        [DataMember(Name = "customIconIndex", EmitDefaultValue = false)]
+        public int CustomIconIndex { get; set; }
+
+        /// <summary>Original file the item was imported from, used to detect duplicate imports.</summary>
+        [DataMember(Name = "sourcePath", EmitDefaultValue = false)]
+        public string? SourcePath { get; set; }
+
         [DataMember(Name = "Kind", EmitDefaultValue = false)]
-        internal ItemKind LegacyKind { get => Kind; set => Kind = value; }
+        internal ItemKind? LegacyKind { get => null; set { if (value.HasValue) Kind = value.Value; } }
 
         public bool IsBroken { get; set; }
 
@@ -184,6 +202,8 @@ namespace TaskbarGrouper.Models
             Arguments = string.Empty;
             WorkingDirectory = string.Empty;
             Kind = ItemKind.File;
+            CustomIconIndex = 0;
+            SourcePath = null;
         }
     }
 }

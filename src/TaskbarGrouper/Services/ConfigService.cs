@@ -14,25 +14,18 @@ namespace TaskbarGrouper.Services
         private readonly string _backupPath;
         private readonly string _dir;
 
-        public ConfigService()
+        public ConfigService() : this(DefaultDataDirectory(), migrateLegacy: !AppInfo.IsPortableMode)
         {
-            if (AppInfo.IsPortableMode)
-            {
-                // Portable Mode: store everything in ./data right next to the exe!
-                _dir = Path.Combine(AppInfo.BaseDirectory, "data");
-            }
-            else
-            {
-                var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                _dir = Path.Combine(appData, "StackBar");
-            }
+        }
 
+        public ConfigService(string dataDirectory, bool migrateLegacy = false)
+        {
+            _dir = dataDirectory;
             Directory.CreateDirectory(_dir);
             _configPath = Path.Combine(_dir, "groups.json");
             _backupPath = Path.Combine(_dir, "groups.json.bak");
 
-            // Migration from TaskbarGrouper legacy folder if exists (only in installed mode)
-            if (!AppInfo.IsPortableMode)
+            if (migrateLegacy)
             {
                 var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
                 var oldPath = Path.Combine(appData, "TaskbarGrouper", "groups.json");
@@ -47,6 +40,22 @@ namespace TaskbarGrouper.Services
             }
         }
 
+        private static string DefaultDataDirectory()
+        {
+            // Portable Mode keeps everything in ./data next to the exe
+            return AppInfo.IsPortableMode
+                ? Path.Combine(AppInfo.BaseDirectory, "data")
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StackBar");
+        }
+
+        /// <summary>
+        /// Raised when a window other than Studio (e.g. a flyout) changed a group in the shared config,
+        /// so Studio can refresh instead of later saving a stale copy.
+        /// </summary>
+        public event Action<string>? GroupChanged;
+
+        public void RaiseGroupChanged(string groupId) => GroupChanged?.Invoke(groupId);
+
         public string ConfigPath => _configPath;
         public string AppDataDirectory => _dir;
 
@@ -55,20 +64,27 @@ namespace TaskbarGrouper.Services
             if (File.Exists(_configPath))
             {
                 var cfg = TryDeserializeFile(_configPath);
-                if (cfg != null) return cfg;
+                if (cfg != null) return SanitizeAndPersist(cfg);
 
-                // Corrupted file! Preserve and try backup
+                // Corrupted file: preserve it once, then recover from the backup
                 try
                 {
                     string corruptName = $"groups.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}.json";
                     File.Copy(_configPath, Path.Combine(_dir, corruptName), true);
+                    AppLogger.Log("groups.json was corrupt and was preserved as " + corruptName);
                 }
                 catch { }
 
                 if (File.Exists(_backupPath))
                 {
                     var backupCfg = TryDeserializeFile(_backupPath);
-                    if (backupCfg != null) return backupCfg;
+                    if (backupCfg != null)
+                    {
+                        // Restore the main file from the backup so the next load doesn't hit the corrupt file again
+                        // and the next save doesn't rotate the corrupt file into the backup slot.
+                        try { File.Copy(_backupPath, _configPath, true); } catch { }
+                        return SanitizeAndPersist(backupCfg);
+                    }
                 }
             }
 
@@ -171,6 +187,52 @@ namespace TaskbarGrouper.Services
             {
                 AppLogger.Log("Failed to save config: " + ex.Message);
             }
+        }
+
+        private AppConfig SanitizeAndPersist(AppConfig cfg)
+        {
+            // Persist cleaned-up names so the (slow) shell name lookup doesn't run again on every load
+            if (SanitizeConfig(cfg)) Save(cfg);
+            return cfg;
+        }
+
+        /// <returns>true if anything was changed.</returns>
+        internal static bool SanitizeConfig(AppConfig cfg)
+        {
+            bool changed = false;
+            if (cfg?.Groups == null) return false;
+            foreach (var group in cfg.Groups)
+            {
+                if (group.Items == null) continue;
+                foreach (var item in group.Items)
+                {
+                    if (item.Name != null && item.Name.Length > 9 && item.Name[8] == '_' && ShortcutService.IsHexPrefix(item.Name.Substring(0, 8)))
+                    {
+                        item.Name = item.Name.Substring(9).Trim();
+                        changed = true;
+                    }
+
+                    if (item.Kind == ItemKind.ShellApp || (item.TargetPath != null && item.TargetPath.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        string current = item.Name ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(current) ||
+                            current.Contains("!") ||
+                            current.StartsWith("com.", StringComparison.OrdinalIgnoreCase) ||
+                            current.StartsWith("electron.", StringComparison.OrdinalIgnoreCase) ||
+                            current.Equals("Microsoft", StringComparison.OrdinalIgnoreCase) ||
+                            current.StartsWith("Claude_", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string? friendly = ShortcutService.ResolveShellAppDisplayName(item.TargetPath!);
+                            if (!string.IsNullOrWhiteSpace(friendly) && friendly != item.Name)
+                            {
+                                item.Name = friendly!;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            return changed;
         }
     }
 }

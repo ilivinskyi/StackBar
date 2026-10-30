@@ -62,13 +62,13 @@ namespace TaskbarGrouper.Services
             _listenerThread.Start();
         }
 
-        public static bool SendCommand(string command)
+        public static bool SendCommand(string command, int connectTimeoutMs = 100)
         {
             try
             {
                 using (var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out))
                 {
-                    client.Connect(100);
+                    client.Connect(connectTimeoutMs);
 
                     // Grant foreground activation permission to the server instance
                     if (GetNamedPipeServerProcessId(client.SafePipeHandle.DangerousGetHandle(), out uint serverPid))
@@ -135,6 +135,8 @@ namespace TaskbarGrouper.Services
             }
         }
 
+        // Callbacks must not block (App marshals them to the UI thread with BeginInvoke): the single pipe
+        // instance is only re-created after this returns, so a blocked listener makes rapid clicks time out.
         private void ProcessPayload(string line)
         {
             var parts = line.Split('|');

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Controls;
@@ -46,9 +47,12 @@ namespace TaskbarGrouper.Views
         private AppGroup? _selectedGroup;
         private bool _suppressEvents;
         private readonly DispatcherTimer _debounceTimer;
+        // Groups edited since the last debounced save (the selection may change before the timer fires)
+        private readonly HashSet<AppGroup> _dirtyGroups = new HashSet<AppGroup>();
 
         // Custom drag & drop reorder state
         private Point _dragStartPoint;
+        private ManagerItemRowViewModel? _dragCandidate;
         private bool _isDraggingItem;
 
         public MainWindow(AppConfig config, ConfigService configService, string? selectGroupId = null)
@@ -61,18 +65,16 @@ namespace TaskbarGrouper.Views
             {
                 Interval = TimeSpan.FromMilliseconds(350)
             };
-            _debounceTimer.Tick += (s, e) =>
+            _debounceTimer.Tick += (s, e) => FlushPendingSave();
+            _configService.GroupChanged += OnGroupChangedElsewhere;
+            Closed += (s, e) =>
             {
-                _debounceTimer.Stop();
-                _configService.Save(_config);
-                if (_selectedGroup != null)
-                {
-                    ShortcutService.UpdatePinnedTaskbarShortcutForGroup(_selectedGroup, _configService.AppDataDirectory);
-                }
-                RefreshLiveFolderIcon();
+                FlushPendingSave();
+                _configService.GroupChanged -= OnGroupChangedElsewhere;
             };
 
             InitializeEmojiPalette();
+            InitializeAccentPalette();
 
             _suppressEvents = true;
             RunAtStartupCheck.IsChecked = StartupService.IsRunAtStartupEnabled();
@@ -103,6 +105,38 @@ namespace TaskbarGrouper.Views
             ItemsListBox.PreviewMouseMove += ItemsListBox_PreviewMouseMove;
         }
 
+        private void FlushPendingSave()
+        {
+            _debounceTimer.Stop();
+            if (_dirtyGroups.Count == 0) return;
+
+            _configService.Save(_config);
+            foreach (var group in _dirtyGroups)
+            {
+                ShortcutService.UpdatePinnedTaskbarShortcutForGroup(group, _configService.AppDataDirectory);
+            }
+            _dirtyGroups.Clear();
+            RefreshLiveFolderIcon();
+        }
+
+        /// <summary>A flyout (or startup maintenance) changed the shared config: show it instead of keeping a stale view.</summary>
+        private void OnGroupChangedElsewhere(string groupId)
+        {
+            if (!_config.Groups.Contains(_selectedGroup!))
+            {
+                _selectedGroup = null;
+            }
+            RefreshGroupsList();
+            if (_selectedGroup != null)
+            {
+                RefreshItemsList();
+            }
+            else if (_config.Groups.Count > 0)
+            {
+                GroupsListBox.SelectedIndex = 0;
+            }
+        }
+
         public void SelectGroupById(string? groupId)
         {
             if (string.IsNullOrEmpty(groupId)) return;
@@ -117,21 +151,44 @@ namespace TaskbarGrouper.Views
         {
             _dragStartPoint = e.GetPosition(null);
             _isDraggingItem = false;
+
+            // Drag only from the row itself: pressing in the name box (text selection) or on a row button must not reorder
+            var source = e.OriginalSource as DependencyObject;
+            _dragCandidate = IsInsideInteractiveControl(source) ? null : GetItemUnderMouse(e.GetPosition(ItemsListBox));
+        }
+
+        private bool IsInsideInteractiveControl(DependencyObject? source)
+        {
+            for (var current = source; current != null && current != ItemsListBox; current = VisualTreeHelper.GetParent(current))
+            {
+                if (current is TextBox || current is System.Windows.Controls.Primitives.ButtonBase) return true;
+                if (!(current is Visual)) break;
+            }
+            return false;
         }
 
         private void ItemsListBox_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
         {
-            if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed && !_isDraggingItem)
+            if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed && !_isDraggingItem && _dragCandidate != null)
             {
                 Point pos = e.GetPosition(null);
                 if (Math.Abs(pos.X - _dragStartPoint.X) > SystemParameters.MinimumHorizontalDragDistance ||
                     Math.Abs(pos.Y - _dragStartPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
                 {
-                    if (ItemsListBox.SelectedItem is ManagerItemRowViewModel row)
+                    var row = _dragCandidate;
+                    _dragCandidate = null;
+                    _isDraggingItem = true;
+                    try
                     {
-                        _isDraggingItem = true;
                         var data = new DataObject("StackBar.ReorderItem", row);
                         DragDrop.DoDragDrop(ItemsListBox, data, DragDropEffects.Move);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException || ex is System.Runtime.InteropServices.COMException)
+                    {
+                        AppLogger.Log("Studio reorder drag failed: " + ex);
+                    }
+                    finally
+                    {
                         _isDraggingItem = false;
                     }
                 }
@@ -225,17 +282,8 @@ namespace TaskbarGrouper.Views
                 };
                 btn.Click += (s, e) =>
                 {
-                    if (_selectedGroup != null)
-                    {
-                        _selectedGroup.IconGlyph = emoji;
-                        SelectedEmojiDisplay.Text = emoji;
-                        EmojiPickerPopup.IsOpen = false;
-                        _selectedGroup.IconMode = FolderIconMode.EmojiGlyph;
-                        StyleEmojiRadio.IsChecked = true;
-                        UpdateIconControlVisibility();
-                        TriggerDebounceSave();
-                        RefreshLiveFolderIcon();
-                    }
+                    EmojiPickerPopup.IsOpen = false;
+                    ApplyGlyph(emoji);
                 };
                 EmojiPalettePanel.Children.Add(btn);
             }
@@ -246,9 +294,25 @@ namespace TaskbarGrouper.Views
             EmojiPickerPopup.IsOpen = !EmojiPickerPopup.IsOpen;
         }
 
+        private void ApplyGlyph(string glyph)
+        {
+            if (_selectedGroup == null || string.IsNullOrWhiteSpace(glyph)) return;
+            _selectedGroup.IconGlyph = glyph;
+            _selectedGroup.IconMode = FolderIconMode.EmojiGlyph;
+            SelectedEmojiDisplay.Text = glyph;
+            _suppressEvents = true;
+            StyleEmojiRadio.IsChecked = true;
+            _suppressEvents = false;
+            UpdateIconControlVisibility();
+            SyncGroupAndTaskbarIcon(_selectedGroup);
+        }
+
         private void OpenWindowsEmojiPanel_Click(object sender, RoutedEventArgs e)
         {
             EmojiPickerPopup.IsOpen = false;
+            // The emoji panel types into the focused text box, so give it an (invisible) one to type into
+            EmojiCaptureBox.Text = string.Empty;
+            EmojiCaptureBox.Focus();
             try
             {
                 keybd_event(VK_LWIN, 0, 0, UIntPtr.Zero);
@@ -257,6 +321,105 @@ namespace TaskbarGrouper.Views
                 keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
             }
             catch { }
+        }
+
+        private void InitializeAccentPalette()
+        {
+            var colors = new (string hex, string name)[]
+            {
+                // Row 1: Reds & Crimson
+                ("#EF4444", "Red"), ("#F87171", "Coral Red"), ("#DC2626", "Crimson"), ("#B91C1C", "Deep Red"), ("#991B1B", "Dark Ruby"),
+                ("#E11D48", "Rose Red"), ("#F43F5E", "Watermelon"), ("#FB7185", "Blush Pink"), ("#BE123C", "Berry Red"), ("#881337", "Burgundy"),
+                // Row 2: Oranges & Ambers
+                ("#F97316", "Bright Orange"), ("#FB923C", "Peach Orange"), ("#EA580C", "Burnt Orange"), ("#C2410C", "Rust"), ("#9A3412", "Brick"),
+                ("#F59E0B", "Amber"), ("#FBBF24", "Warm Gold"), ("#D97706", "Dark Amber"), ("#B45309", "Bronze"), ("#78350F", "Copper"),
+                // Row 3: Yellows, Limes & Light Greens
+                ("#EAB308", "Yellow"), ("#FACC15", "Sun Yellow"), ("#CA8A04", "Mustard"), ("#84CC16", "Lime"), ("#A3E635", "Bright Lime"),
+                ("#65A30D", "Olive Lime"), ("#4D7C0F", "Avocado"), ("#22C55E", "Leaf Green"), ("#4ADE80", "Mint Green"), ("#16A34A", "Forest"),
+                // Row 4: Emeralds, Teals & Cyans
+                ("#10B981", "Emerald"), ("#34D399", "Seafoam"), ("#059669", "Dark Emerald"), ("#047857", "Pine"), ("#14B8A6", "Teal"),
+                ("#2DD4BF", "Turquoise"), ("#0D9488", "Deep Teal"), ("#06B6D4", "Cyan"), ("#22D3EE", "Aqua Sky"), ("#0891B2", "Ocean Blue"),
+                // Row 5: Blues & Indigos
+                ("#0EA5E9", "Sky Blue"), ("#38BDF8", "Light Sky"), ("#0284C7", "Electric Blue"), ("#3A6DF0", "Classic Blue"), ("#60A5FA", "Ice Blue"),
+                ("#2563EB", "Royal Blue"), ("#1D4ED8", "Dark Royal"), ("#6366F1", "Indigo"), ("#818CF8", "Light Indigo"), ("#4F46E5", "Deep Indigo"),
+                // Row 6: Purples, Pinks & Neutrals
+                ("#8B5CF6", "Neon Purple"), ("#A78BFA", "Soft Violet"), ("#7C3AED", "Deep Violet"), ("#A855F7", "Amethyst"), ("#C084FC", "Lavender"),
+                ("#9333EA", "Dark Amethyst"), ("#D946EF", "Fuchsia"), ("#EC4899", "Hot Pink"), ("#F472B6", "Bubblegum"), ("#64748B", "Slate Gray")
+            };
+
+            AccentPalettePanel.Children.Clear();
+            var bc = new BrushConverter();
+            foreach (var c in colors)
+            {
+                var border = new Border
+                {
+                    Width = 20,
+                    Height = 20,
+                    CornerRadius = new CornerRadius(10),
+                    Background = (Brush)bc.ConvertFromString(c.hex),
+                    BorderBrush = (Brush)bc.ConvertFromString("#33FFFFFF"),
+                    BorderThickness = new Thickness(1),
+                    Margin = new Thickness(3.5),
+                    Cursor = Cursors.Hand,
+                    ToolTip = $"{c.name} ({c.hex})"
+                };
+
+                string hexValue = c.hex;
+                string nameValue = c.name;
+
+                border.MouseEnter += (s, ev) =>
+                {
+                    HoveredColorName.Text = $"{nameValue} ({hexValue})";
+                };
+                border.MouseLeave += (s, ev) =>
+                {
+                    HoveredColorName.Text = string.Empty;
+                };
+                border.MouseLeftButtonDown += (s, ev) =>
+                {
+                    SelectAccentColor(hexValue, nameValue);
+                    AccentPickerPopup.IsOpen = false;
+                };
+
+                AccentPalettePanel.Children.Add(border);
+            }
+        }
+
+        private void EmojiCaptureBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            string text = EmojiCaptureBox.Text.Trim();
+            if (text.Length == 0) return;
+            EmojiCaptureBox.Text = string.Empty;
+            Keyboard.ClearFocus();
+            ApplyGlyph(text);
+        }
+
+        private void AccentPickerBtn_Click(object sender, RoutedEventArgs e)
+        {
+            AccentPickerPopup.IsOpen = !AccentPickerPopup.IsOpen;
+        }
+
+        private void SelectAccentColor(string hex, string name)
+        {
+            if (_selectedGroup == null) return;
+            _selectedGroup.AccentColorHex = hex;
+            try
+            {
+                SelectedAccentSwatch.Background = (Brush)new BrushConverter().ConvertFromString(hex);
+            }
+            catch { }
+            SelectedAccentHexText.Text = hex.ToUpperInvariant();
+            SyncGroupAndTaskbarIcon(_selectedGroup);
+        }
+
+        private void SyncGroupAndTaskbarIcon(AppGroup? group)
+        {
+            if (group == null) return;
+            _dirtyGroups.Remove(group);
+            _configService.Save(_config);
+            ShortcutService.UpdatePinnedTaskbarShortcutForGroup(group, _configService.AppDataDirectory);
+            group.NotifyAppearanceChanged();
+            RefreshLiveFolderIcon();
         }
 
         private void RefreshItemsList()
@@ -279,16 +442,20 @@ namespace TaskbarGrouper.Views
             ShowLabelsCheck.IsChecked = _selectedGroup.ShowLabels;
 
             string hex = _selectedGroup.AccentColorHex ?? "#3A6DF0";
-            if (hex.Equals("#8B5CF6", StringComparison.OrdinalIgnoreCase)) ColorPurple.IsChecked = true;
-            else if (hex.Equals("#10B981", StringComparison.OrdinalIgnoreCase)) ColorEmerald.IsChecked = true;
-            else if (hex.Equals("#F59E0B", StringComparison.OrdinalIgnoreCase)) ColorAmber.IsChecked = true;
-            else if (hex.Equals("#EF4444", StringComparison.OrdinalIgnoreCase)) ColorRed.IsChecked = true;
-            else ColorBlue.IsChecked = true;
+            try
+            {
+                SelectedAccentSwatch.Background = (Brush)new BrushConverter().ConvertFromString(hex);
+            }
+            catch
+            {
+                SelectedAccentSwatch.Background = (Brush)new BrushConverter().ConvertFromString("#3A6DF0");
+            }
+            SelectedAccentHexText.Text = hex.ToUpperInvariant();
 
             ItemsListBox.ItemsSource = _selectedGroup.Items.Select(i => new ManagerItemRowViewModel(() => TriggerDebounceSave())
             {
                 Model = i,
-                Icon = IconHelper.ExtractIcon(i.TargetPath, i.CustomIconPath)
+                Icon = IconHelper.ExtractIcon(i)
             }).ToList();
 
             EmptyStateOverlay.Visibility = _selectedGroup.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -299,6 +466,7 @@ namespace TaskbarGrouper.Views
 
         private void TriggerDebounceSave()
         {
+            if (_selectedGroup != null) _dirtyGroups.Add(_selectedGroup);
             _debounceTimer.Stop();
             _debounceTimer.Start();
         }
@@ -316,6 +484,7 @@ namespace TaskbarGrouper.Views
         {
             if (_suppressEvents || _selectedGroup == null) return;
             _selectedGroup.Name = GroupNameBox.Text;
+            _selectedGroup.NotifyAppearanceChanged();
             TriggerDebounceSave();
         }
 
@@ -330,8 +499,7 @@ namespace TaskbarGrouper.Views
                 _selectedGroup.IconMode = FolderIconMode.MiniGrid2x2;
 
             UpdateIconControlVisibility();
-            TriggerDebounceSave();
-            RefreshLiveFolderIcon();
+            SyncGroupAndTaskbarIcon(_selectedGroup);
         }
 
         private void ChooseCustomIcon_Click(object sender, RoutedEventArgs e)
@@ -363,8 +531,7 @@ namespace TaskbarGrouper.Views
                     _selectedGroup.IconMode = FolderIconMode.CustomIco;
                     StyleCustomRadio.IsChecked = true;
                     UpdateIconControlVisibility();
-                    TriggerDebounceSave();
-                    RefreshLiveFolderIcon();
+                    SyncGroupAndTaskbarIcon(_selectedGroup);
                     StatusText.Text = $"Applied custom icon from '{Path.GetFileName(ofd.FileName)}'.";
                 }
             }
@@ -379,15 +546,14 @@ namespace TaskbarGrouper.Views
             }
 
             var first = _selectedGroup.Items[0];
-            string? persisted = ShortcutService.PersistCustomFolderIcon(first.TargetPath, _selectedGroup.Id, _configService.AppDataDirectory);
+            string? persisted = ShortcutService.PersistCustomFolderIcon(first, _selectedGroup.Id, _configService.AppDataDirectory);
             if (!string.IsNullOrEmpty(persisted))
             {
                 _selectedGroup.CustomFolderIconPath = persisted;
                 _selectedGroup.IconMode = FolderIconMode.CustomIco;
                 StyleCustomRadio.IsChecked = true;
                 UpdateIconControlVisibility();
-                TriggerDebounceSave();
-                RefreshLiveFolderIcon();
+                SyncGroupAndTaskbarIcon(_selectedGroup);
                 StatusText.Text = $"Using '{first.Name}' as folder cover icon.";
             }
         }
@@ -399,8 +565,7 @@ namespace TaskbarGrouper.Views
             _selectedGroup.IconMode = FolderIconMode.MiniGrid2x2;
             StyleGridRadio.IsChecked = true;
             UpdateIconControlVisibility();
-            TriggerDebounceSave();
-            RefreshLiveFolderIcon();
+            SyncGroupAndTaskbarIcon(_selectedGroup);
             StatusText.Text = "Reverted to 2x2 grid icon.";
         }
 
@@ -412,33 +577,21 @@ namespace TaskbarGrouper.Views
             _selectedGroup.IconMode = FolderIconMode.EmojiGlyph;
             StyleEmojiRadio.IsChecked = true;
             UpdateIconControlVisibility();
-            TriggerDebounceSave();
-            RefreshLiveFolderIcon();
+            SyncGroupAndTaskbarIcon(_selectedGroup);
         }
 
         private void SetAsFolderIcon_Click(object sender, RoutedEventArgs e)
         {
             if (_selectedGroup == null || !(sender is FrameworkElement fe) || !(fe.Tag is ManagerItemRowViewModel row)) return;
-            string? persisted = ShortcutService.PersistCustomFolderIcon(row.Model.TargetPath, _selectedGroup.Id, _configService.AppDataDirectory);
+            string? persisted = ShortcutService.PersistCustomFolderIcon(row.Model, _selectedGroup.Id, _configService.AppDataDirectory);
             if (!string.IsNullOrEmpty(persisted))
             {
                 _selectedGroup.CustomFolderIconPath = persisted;
                 _selectedGroup.IconMode = FolderIconMode.CustomIco;
                 StyleCustomRadio.IsChecked = true;
                 UpdateIconControlVisibility();
-                TriggerDebounceSave();
-                RefreshLiveFolderIcon();
+                SyncGroupAndTaskbarIcon(_selectedGroup);
                 StatusText.Text = $"Set '{row.Model.Name}' icon as the cover for '{_selectedGroup.Name}'.";
-            }
-        }
-
-        private void AccentRadio_Checked(object sender, RoutedEventArgs e)
-        {
-            if (_suppressEvents || _selectedGroup == null) return;
-            if (sender is RadioButton rb && rb.Tag is string hex)
-            {
-                _selectedGroup.AccentColorHex = hex;
-                TriggerDebounceSave();
             }
         }
 
@@ -483,22 +636,41 @@ namespace TaskbarGrouper.Views
                 return;
             }
 
-            var res = MessageBox.Show($"Are you sure you want to delete the '{_selectedGroup.Name}' stack?", "Delete Stack", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            var res = MessageBox.Show(
+                this,
+                $"Are you sure you want to delete the '{_selectedGroup.Name}' stack?\n\nThis permanently deletes the folder configuration and tries to unpin it from your Windows taskbar.",
+                "Delete Stack Confirmation",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
             if (res != MessageBoxResult.Yes) return;
 
-            _config.Groups.Remove(_selectedGroup);
+            var deleted = _selectedGroup;
+            bool unpinned = ShortcutService.DeleteGroupShortcuts(deleted.Id, _configService.AppDataDirectory);
+
+            _dirtyGroups.Remove(deleted);
+            _config.Groups.Remove(deleted);
+            foreach (var item in deleted.Items)
+            {
+                ShortcutService.DeletePersistedLinkIfUnused(item, _config, _configService.AppDataDirectory);
+            }
             _selectedGroup = _config.Groups.FirstOrDefault();
             _configService.Save(_config);
             RefreshGroupsList();
             if (_selectedGroup != null)
                 GroupsListBox.SelectedItem = _selectedGroup;
+
+            StatusText.Text = unpinned
+                ? $"Deleted '{deleted.Name}'."
+                : $"Deleted '{deleted.Name}'. Windows didn't allow unpinning it automatically: right-click its taskbar icon and choose 'Unpin from taskbar'.";
         }
 
         private void PreviewFlyout_Click(object sender, RoutedEventArgs e)
         {
             if (_selectedGroup == null) return;
             _configService.Save(_config);
-            var flyout = new FlyoutWindow(_selectedGroup, onEditRequested: _ => Activate());
+            FlushPendingSave();
+            var flyout = new FlyoutWindow(_selectedGroup, _config, _configService, onEditRequested: _ => Activate());
             flyout.Show();
         }
 
@@ -526,18 +698,17 @@ namespace TaskbarGrouper.Views
             var dialog = new TaskbarImporterWindow { Owner = this };
             if (dialog.ShowDialog() == true && dialog.SelectedItems.Count > 0)
             {
+                int added = 0;
                 foreach (var item in dialog.SelectedItems)
                 {
-                    var persistent = ShortcutService.ImportAndPersistShortcut(item.TargetPath, _configService.AppDataDirectory);
-                    if (!_selectedGroup.Items.Any(existing => existing.TargetPath.Equals(persistent.TargetPath, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _selectedGroup.Items.Add(persistent);
-                    }
+                    if (TryAddItem(item.TargetPath, item.Name)) added++;
                 }
-                _configService.Save(_config);
+                SyncGroupAndTaskbarIcon(_selectedGroup);
                 RefreshItemsList();
-                RefreshGroupsList();
-                StatusText.Text = $"Imported {dialog.SelectedItems.Count} app(s) into '{_selectedGroup.Name}'!";
+                int skipped = dialog.SelectedItems.Count - added;
+                StatusText.Text = skipped > 0
+                    ? $"Imported {added} app(s) into '{_selectedGroup.Name}' ({skipped} already in the stack)."
+                    : $"Imported {added} app(s) into '{_selectedGroup.Name}'!";
             }
         }
 
@@ -556,15 +727,10 @@ namespace TaskbarGrouper.Views
             {
                 foreach (var file in ofd.FileNames)
                 {
-                    var persistent = ShortcutService.ImportAndPersistShortcut(file, _configService.AppDataDirectory);
-                    if (!_selectedGroup.Items.Any(existing => existing.TargetPath.Equals(persistent.TargetPath, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _selectedGroup.Items.Add(persistent);
-                    }
+                    TryAddItem(file, null);
                 }
-                _configService.Save(_config);
+                SyncGroupAndTaskbarIcon(_selectedGroup);
                 RefreshItemsList();
-                RefreshGroupsList();
             }
         }
 
@@ -577,7 +743,7 @@ namespace TaskbarGrouper.Views
                 var temp = _selectedGroup.Items[idx - 1];
                 _selectedGroup.Items[idx - 1] = _selectedGroup.Items[idx];
                 _selectedGroup.Items[idx] = temp;
-                _configService.Save(_config);
+                SyncGroupAndTaskbarIcon(_selectedGroup);
                 RefreshItemsList();
             }
         }
@@ -591,7 +757,7 @@ namespace TaskbarGrouper.Views
                 var temp = _selectedGroup.Items[idx + 1];
                 _selectedGroup.Items[idx + 1] = _selectedGroup.Items[idx];
                 _selectedGroup.Items[idx] = temp;
-                _configService.Save(_config);
+                SyncGroupAndTaskbarIcon(_selectedGroup);
                 RefreshItemsList();
             }
         }
@@ -600,9 +766,23 @@ namespace TaskbarGrouper.Views
         {
             if (_selectedGroup == null || !(sender is FrameworkElement fe) || !(fe.Tag is ManagerItemRowViewModel row)) return;
             _selectedGroup.Items.Remove(row.Model);
-            _configService.Save(_config);
+            ShortcutService.DeletePersistedLinkIfUnused(row.Model, _config, _configService.AppDataDirectory);
+            SyncGroupAndTaskbarIcon(_selectedGroup);
             RefreshItemsList();
-            RefreshGroupsList();
+        }
+
+        /// <summary>
+        /// Imports a file/shortcut/app into the selected group unless it is already there.
+        /// The duplicate check runs before the import, which copies shortcuts under a new unique name.
+        /// </summary>
+        private bool TryAddItem(string sourcePath, string? displayName)
+        {
+            if (_selectedGroup == null) return false;
+            if (ShortcutService.GroupContainsSource(_selectedGroup, sourcePath, displayName)) return false;
+
+            var persistent = ShortcutService.ImportAndPersistShortcut(sourcePath, _configService.AppDataDirectory, displayName);
+            _selectedGroup.Items.Add(persistent);
+            return true;
         }
 
         private void ItemsListBox_Drop(object sender, DragEventArgs e)
@@ -615,7 +795,6 @@ namespace TaskbarGrouper.Views
                 var dragged = e.Data.GetData("StackBar.ReorderItem") as ManagerItemRowViewModel;
                 if (dragged != null)
                 {
-                    // Target drop position
                     var targetItem = GetItemUnderMouse(e.GetPosition(ItemsListBox));
                     if (targetItem != null && targetItem != dragged)
                     {
@@ -625,7 +804,7 @@ namespace TaskbarGrouper.Views
                         {
                             _selectedGroup.Items.RemoveAt(oldIdx);
                             _selectedGroup.Items.Insert(newIdx, dragged.Model);
-                            _configService.Save(_config);
+                            SyncGroupAndTaskbarIcon(_selectedGroup);
                             RefreshItemsList();
                         }
                     }
@@ -642,16 +821,10 @@ namespace TaskbarGrouper.Views
                 int count = 0;
                 foreach (var file in files)
                 {
-                    var persistent = ShortcutService.ImportAndPersistShortcut(file, _configService.AppDataDirectory);
-                    if (!_selectedGroup.Items.Any(existing => existing.TargetPath.Equals(persistent.TargetPath, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _selectedGroup.Items.Add(persistent);
-                        count++;
-                    }
+                    if (TryAddItem(file, null)) count++;
                 }
-                _configService.Save(_config);
+                SyncGroupAndTaskbarIcon(_selectedGroup);
                 RefreshItemsList();
-                RefreshGroupsList();
                 StatusText.Text = $"Added {count} item(s) to '{_selectedGroup.Name}'.";
             }
         }

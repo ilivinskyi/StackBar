@@ -78,33 +78,61 @@ namespace TaskbarGrouper.Services
         private const uint SHGFI_ICON = 0x000000100;
         private const uint SHGFI_LARGEICON = 0x000000000;
 
-        private static readonly Guid IShellItemImageFactoryGuid = new Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b");
-        private static readonly Dictionary<string, ImageSource> _iconCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern int SHDefExtractIcon(string pszIconFile, int iIndex, uint uFlags, out IntPtr phiconLarge, out IntPtr phiconSmall, uint nIconSize);
 
-        public static ImageSource? ExtractIcon(string targetPath, string? customIconPath = null)
+        private static readonly Guid IShellItemImageFactoryGuid = new Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b");
+
+        // Accessed from the UI thread and from the importer's background scan
+        private static readonly Dictionary<string, ImageSource> _iconCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, ImageSource> _groupPreviewCache = new Dictionary<string, ImageSource>(StringComparer.Ordinal);
+
+        public static ImageSource? ExtractIcon(GroupItem item) => ExtractIcon(item.TargetPath, item.CustomIconPath, item.CustomIconIndex);
+
+        public static ImageSource? ExtractIcon(string targetPath, string? customIconPath = null, int iconIndex = 0)
         {
             string key = (!string.IsNullOrWhiteSpace(customIconPath) ? customIconPath : targetPath) ?? string.Empty;
             if (string.IsNullOrEmpty(key)) return null;
+            key += "," + iconIndex;
 
-            if (_iconCache.TryGetValue(key, out var cached))
-                return cached;
+            lock (_iconCache)
+            {
+                if (_iconCache.TryGetValue(key, out var cached))
+                    return cached;
+            }
 
-            using (var bmp = ExtractBitmap(targetPath, customIconPath))
+            using (var bmp = ExtractBitmap(targetPath, customIconPath, iconIndex))
             {
                 if (bmp == null) return null;
                 var src = BitmapToImageSource(bmp);
-                _iconCache[key] = src;
+                lock (_iconCache)
+                {
+                    _iconCache[key] = src;
+                }
                 return src;
             }
         }
 
-        public static Bitmap? ExtractBitmap(string targetPath, string? customIconPath = null)
+        public static Bitmap? ExtractBitmap(string targetPath, string? customIconPath = null, int iconIndex = 0)
         {
-            string path = !string.IsNullOrWhiteSpace(customIconPath) && File.Exists(customIconPath)
-                ? customIconPath!
-                : targetPath;
+            bool useCustom = !string.IsNullOrWhiteSpace(customIconPath) && File.Exists(customIconPath);
+            string path = useCustom ? customIconPath! : targetPath;
+            if (!useCustom) iconIndex = 0;
 
             if (string.IsNullOrWhiteSpace(path)) return null;
+
+            // Icon resources inside a binary: the shell item image is only the file's own (first) icon,
+            // so a specific index (e.g. shell32.dll,-16) or a DLL/icon library needs explicit extraction.
+            string resourceExt = Path.GetExtension(path);
+            bool isIconLibrary = resourceExt.Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
+                                 resourceExt.Equals(".icl", StringComparison.OrdinalIgnoreCase) ||
+                                 resourceExt.Equals(".cpl", StringComparison.OrdinalIgnoreCase);
+            bool isBinary = isIconLibrary || resourceExt.Equals(".exe", StringComparison.OrdinalIgnoreCase);
+            if (isBinary && (iconIndex != 0 || isIconLibrary) && File.Exists(path))
+            {
+                var fromResource = ExtractIconResource(path, iconIndex);
+                if (fromResource != null) return fromResource;
+            }
 
             // Directory/Folder: Use SHGetFileInfo for clean 32bpp alpha icon without black background
             if (Directory.Exists(path))
@@ -190,10 +218,7 @@ namespace TaskbarGrouper.Services
                         {
                             try
                             {
-                                using (var rawBmp = Image.FromHbitmap(hBitmap))
-                                {
-                                    return new Bitmap(rawBmp);
-                                }
+                                return HBitmapToBitmapPreservingAlpha(hBitmap);
                             }
                             finally
                             {
@@ -209,7 +234,47 @@ namespace TaskbarGrouper.Services
             }
             catch { }
 
-            // 2. Fallback to Icon.ExtractAssociatedIcon
+            // 2. Fallback for .lnk shortcuts: Try extracting from target .exe
+            if (path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+            {
+                try
+                {
+                    var item = ShortcutService.ParseShortcut(path);
+                    if (!string.IsNullOrWhiteSpace(item.CustomIconPath) && !item.CustomIconPath!.Equals(path, StringComparison.OrdinalIgnoreCase) && File.Exists(item.CustomIconPath))
+                    {
+                        var bmp = ExtractBitmap(item.CustomIconPath!, item.CustomIconPath, item.CustomIconIndex);
+                        if (bmp != null) return bmp;
+                    }
+                }
+                catch { }
+            }
+
+            // 3. Fallback to SHGetFileInfo (queries Windows Explorer's registered icon)
+            try
+            {
+                if (File.Exists(path))
+                {
+                    var shinfo = new SHFILEINFO();
+                    IntPtr hImg = SHGetFileInfo(path, 0, ref shinfo, (uint)Marshal.SizeOf(shinfo), SHGFI_ICON | SHGFI_LARGEICON);
+                    if (hImg != IntPtr.Zero && shinfo.hIcon != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            using (var ico = Icon.FromHandle(shinfo.hIcon))
+                            {
+                                return ico.ToBitmap();
+                            }
+                        }
+                        finally
+                        {
+                            DestroyIcon(shinfo.hIcon);
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 4. Fallback to Icon.ExtractAssociatedIcon
             try
             {
                 string? resolved = ResolveFullPath(path);
@@ -226,12 +291,117 @@ namespace TaskbarGrouper.Services
             return null;
         }
 
+        private static Bitmap? ExtractIconResource(string path, int iconIndex)
+        {
+            try
+            {
+                const uint size = 64;
+                int hr = SHDefExtractIcon(path, iconIndex, 0, out IntPtr hLarge, out IntPtr hSmall, size | (16u << 16));
+                if (hSmall != IntPtr.Zero) DestroyIcon(hSmall);
+                if (hr != 0 || hLarge == IntPtr.Zero) return null;
+                try
+                {
+                    using (var ico = Icon.FromHandle(hLarge))
+                    {
+                        return ico.ToBitmap();
+                    }
+                }
+                finally
+                {
+                    DestroyIcon(hLarge);
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Image.FromHbitmap labels a 32-bit DIB as Format32bppRgb and so drops the alpha channel, which turns
+        /// transparent icon pixels black. The pixel bytes still contain the (premultiplied) alpha, so reinterpret them.
+        /// </summary>
+        internal static Bitmap HBitmapToBitmapPreservingAlpha(IntPtr hBitmap)
+        {
+            using (var raw = Image.FromHbitmap(hBitmap))
+            {
+                if (Image.GetPixelFormatSize(raw.PixelFormat) < 32)
+                    return new Bitmap(raw);
+
+                var rect = new Rectangle(0, 0, raw.Width, raw.Height);
+                var data = raw.LockBits(rect, ImageLockMode.ReadOnly, raw.PixelFormat);
+                try
+                {
+                    if (!HasAnyAlpha(data))
+                        return new Bitmap(raw); // genuinely opaque bitmap: alpha bytes are all zero
+
+                    using (var premultiplied = new Bitmap(data.Width, data.Height, data.Stride, System.Drawing.Imaging.PixelFormat.Format32bppPArgb, data.Scan0))
+                    {
+                        var result = new Bitmap(data.Width, data.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                        using (var g = Graphics.FromImage(result))
+                        {
+                            g.DrawImage(premultiplied, new Rectangle(0, 0, data.Width, data.Height));
+                        }
+                        return result;
+                    }
+                }
+                finally
+                {
+                    raw.UnlockBits(data);
+                }
+            }
+        }
+
+        internal static bool HasAnyAlpha(BitmapData data)
+        {
+            var row = new byte[Math.Abs(data.Stride)];
+            for (int y = 0; y < data.Height; y++)
+            {
+                Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), row, 0, row.Length);
+                for (int x = 3; x < data.Width * 4; x += 4)
+                {
+                    if (row[x] != 0) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Group thumbnail for the Studio sidebar. Cached by everything that affects the picture, because
+        /// the sidebar binding asks for it on every refresh and rendering extracts up to four app icons.
+        /// </summary>
         public static ImageSource GenerateGroupPreviewImage(AppGroup group)
         {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(group.IconMode).Append('|').Append(group.AccentColorHex).Append('|').Append(group.IconGlyph)
+              .Append('|').Append(group.CustomFolderIconPath);
+            if (group.Items != null)
+            {
+                for (int i = 0; i < group.Items.Count && i < 4; i++)
+                {
+                    var it = group.Items[i];
+                    sb.Append('|').Append(it.TargetPath).Append(',').Append(it.CustomIconPath).Append(',').Append(it.CustomIconIndex);
+                }
+            }
+            string key = sb.ToString();
+
+            lock (_groupPreviewCache)
+            {
+                if (_groupPreviewCache.TryGetValue(key, out var cached)) return cached;
+            }
+
+            ImageSource image;
             using (var bmp = RenderGroupIconBitmap(group))
             {
-                return BitmapToImageSource(bmp);
+                image = BitmapToImageSource(bmp);
             }
+
+            lock (_groupPreviewCache)
+            {
+                if (_groupPreviewCache.Count > 64) _groupPreviewCache.Clear();
+                _groupPreviewCache[key] = image;
+            }
+            return image;
         }
 
         public static Bitmap RenderGroupIconBitmap(AppGroup group)
@@ -290,7 +460,7 @@ namespace TaskbarGrouper.Services
                     var subIcons = new List<Bitmap>();
                     for (int i = 0; i < group.Items.Count && subIcons.Count < 4; i++)
                     {
-                        var b = ExtractBitmap(group.Items[i].TargetPath, group.Items[i].CustomIconPath);
+                        var b = ExtractBitmap(group.Items[i].TargetPath, group.Items[i].CustomIconPath, group.Items[i].CustomIconIndex);
                         if (b != null) subIcons.Add(b);
                     }
 

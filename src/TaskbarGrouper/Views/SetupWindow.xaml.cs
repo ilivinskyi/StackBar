@@ -11,12 +11,12 @@ namespace TaskbarGrouper.Views
     {
         private string _installDir;
 
+        private const string UninstallKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\StackBar";
+
         public SetupWindow()
         {
             InitializeComponent();
-            _installDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Programs", "StackBar");
+            _installDir = GetInstalledDirectory();
 
             StatusLabel.Text = _installDir;
 
@@ -57,15 +57,7 @@ namespace TaskbarGrouper.Views
 
             try
             {
-                // Graceful exit via IPC
-                IpcService.SendCommand("EXIT");
-                System.Threading.Thread.Sleep(300);
-
-                // Force terminate if any lingering
-                foreach (var proc in Process.GetProcessesByName("StackBar"))
-                {
-                    try { proc.Kill(); proc.WaitForExit(1000); } catch { }
-                }
+                StopRunningInstances();
 
                 Directory.CreateDirectory(_installDir);
                 string targetExe = Path.Combine(_installDir, "StackBar.exe");
@@ -103,7 +95,7 @@ namespace TaskbarGrouper.Views
                 }
 
                 // Register in Windows "Installed apps"
-                using (var uninst = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\StackBar"))
+                using (var uninst = Registry.CurrentUser.CreateSubKey(UninstallKeyPath))
                 {
                     uninst.SetValue("DisplayName", "StackBar — Taskbar Folder Studio");
                     uninst.SetValue("DisplayIcon", targetExe);
@@ -152,17 +144,9 @@ namespace TaskbarGrouper.Views
 
                 if (result != MessageBoxResult.Yes) return;
 
-                IpcService.SendCommand("EXIT");
-                System.Threading.Thread.Sleep(300);
+                StopRunningInstances();
 
-                foreach (var proc in Process.GetProcessesByName("StackBar"))
-                {
-                    try { proc.Kill(); proc.WaitForExit(1000); } catch { }
-                }
-
-                string installDir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Programs", "StackBar");
+                string installDir = GetInstalledDirectory();
 
                 string desktopLnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "StackBar.lnk");
                 if (File.Exists(desktopLnk)) File.Delete(desktopLnk);
@@ -175,7 +159,7 @@ namespace TaskbarGrouper.Views
                     runKey?.DeleteValue("StackBar", false);
                 }
 
-                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\StackBar", false);
+                Registry.CurrentUser.DeleteSubKeyTree(UninstallKeyPath, false);
 
                 var dataRes = MessageBox.Show("Do you also want to remove your saved StackBar configurations and custom folders?", "Delete Data", MessageBoxButton.YesNo, MessageBoxImage.Question);
                 if (dataRes == MessageBoxResult.Yes)
@@ -184,19 +168,11 @@ namespace TaskbarGrouper.Views
                     if (Directory.Exists(appData)) Directory.Delete(appData, true);
                 }
 
-                // Self-deletion of install dir
-                if (Directory.Exists(installDir))
-                {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = $"/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{installDir}\"",
-                        WindowStyle = ProcessWindowStyle.Hidden,
-                        CreateNoWindow = true
-                    });
-                }
-
                 MessageBox.Show("StackBar has been completely uninstalled.", "StackBar", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                // Started last: the uninstaller usually runs from inside the install folder, and its exe
+                // can only be deleted after this process has exited.
+                ScheduleDirectoryDeletionAfterExit(installDir);
             }
             catch (Exception ex)
             {
@@ -205,6 +181,66 @@ namespace TaskbarGrouper.Views
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
+
+        /// <summary>Install folder recorded at install time (it may be a custom one), else the default location.</summary>
+        private static string GetInstalledDirectory()
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(UninstallKeyPath, false))
+                {
+                    if (key?.GetValue("InstallLocation") is string location && !string.IsNullOrWhiteSpace(location))
+                        return location;
+                }
+            }
+            catch { }
+
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs", "StackBar");
+        }
+
+        /// <summary>
+        /// Closes the resident app (gracefully via IPC, then forcefully). Never touches the current process:
+        /// the uninstaller registered in Windows is StackBar.exe itself and would otherwise kill itself.
+        /// </summary>
+        private static void StopRunningInstances()
+        {
+            IpcService.SendCommand("EXIT");
+            System.Threading.Thread.Sleep(300);
+
+            int selfId = Process.GetCurrentProcess().Id;
+            foreach (var proc in Process.GetProcessesByName("StackBar"))
+            {
+                using (proc)
+                {
+                    if (proc.Id == selfId) continue;
+                    try { proc.Kill(); proc.WaitForExit(2000); } catch { }
+                }
+            }
+        }
+
+        internal static void ScheduleDirectoryDeletionAfterExit(string directory)
+        {
+            if (!Directory.Exists(directory)) return;
+
+            int selfId = Process.GetCurrentProcess().Id;
+            string escapedDir = directory.Replace("'", "''");
+            string script = $"Wait-Process -Id {selfId} -ErrorAction SilentlyContinue; " +
+                            $"Start-Sleep -Milliseconds 500; " +
+                            $"Remove-Item -LiteralPath '{escapedDir}' -Recurse -Force -ErrorAction SilentlyContinue";
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"{script}\"",
+                WindowStyle = ProcessWindowStyle.Hidden,
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                // Not inside the folder being deleted, or the helper itself would keep it locked
+                WorkingDirectory = Path.GetTempPath()
+            });
+        }
 
         private static void CreateAppShortcut(string lnkPath, string targetExePath)
         {

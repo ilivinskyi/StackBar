@@ -10,6 +10,7 @@
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
         Left="-32000"
+        Opacity="0"
         Loaded="Window_Loaded"
         Deactivated="Window_Deactivated"
         Closing="Window_Closing"
@@ -32,6 +33,9 @@
                 Grid.Row="1"
                 CornerRadius="16"
                 BorderThickness="1.2"
+                AllowDrop="True"
+                DragOver="RootBorder_DragOver"
+                Drop="RootBorder_Drop"
                 Padding="16,14,16,14"
                 RenderTransformOrigin="0.5,1.0"
                 Opacity="0">
@@ -67,11 +71,12 @@
                             Background="Transparent"
                             BorderThickness="0"
                             Cursor="Hand"
+                            Focusable="False"
                             Padding="6,2">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border x:Name="Gb" CornerRadius="6" Padding="6,3" Background="Transparent">
-                                    <TextBlock Text="⚙" Foreground="#88FFFFFF" FontSize="12"/>
+                                    <TextBlock Text="⚙" Foreground="#BBFFFFFF" FontSize="12"/>
                                 </Border>
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsMouseOver" Value="True">
@@ -109,7 +114,87 @@
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Border x:Name="AccentDot" Width="8" Height="8" CornerRadius="4" Background="#3A6DF0" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="GroupTitleText" Text="Stack" Foreground="#F5FFFFFF" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="GroupTitleGlyph" Text="📁" FontSize="13.5" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="GroupTitleText"
+                                   Text="Stack"
+                                   Foreground="#F5FFFFFF"
+                                   FontSize="13.5"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   Cursor="Hand"
+                                   ToolTip="Click to rename"
+                                   MouseLeftButtonDown="GroupTitleText_MouseLeftButtonDown"/>
+                        <Button x:Name="RenameButton"
+                                Click="RenameButton_Click"
+                                ToolTip="Rename stack"
+                                Cursor="Hand"
+                                Focusable="False"
+                                Margin="4,0,0,0"
+                                VerticalAlignment="Center">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="Rb" CornerRadius="5" Padding="4,1" Background="Transparent">
+                                        <TextBlock Text="✏" Foreground="#88FFFFFF" FontSize="11"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Rb" Property="Background" Value="#25FFFFFF"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                        <TextBox x:Name="GroupTitleBox"
+                                 Visibility="Collapsed"
+                                 FontSize="13"
+                                 FontWeight="SemiBold"
+                                 Foreground="White"
+                                 Background="#252736"
+                                 BorderBrush="#3A6DF0"
+                                 BorderThickness="1"
+                                 Padding="6,2"
+                                 VerticalAlignment="Center"
+                                 MinWidth="100"
+                                 KeyDown="GroupTitleBox_KeyDown"
+                                 LostFocus="GroupTitleBox_LostFocus"/>
+                        <!-- Not focusable, so clicking them doesn't first commit through the TextBox's LostFocus -->
+                        <Button x:Name="RenameSaveButton"
+                                Click="RenameSaveButton_Click"
+                                ToolTip="Save name (Enter)"
+                                Cursor="Hand"
+                                Focusable="False"
+                                Visibility="Collapsed"
+                                Margin="6,0,0,0"
+                                VerticalAlignment="Center">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Width="22" Height="22" CornerRadius="6" Background="#3A6DF0">
+                                        <TextBlock Text="✓" Foreground="White" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                        <Button x:Name="RenameCancelButton"
+                                Click="RenameCancelButton_Click"
+                                ToolTip="Cancel (Esc)"
+                                Cursor="Hand"
+                                Focusable="False"
+                                Visibility="Collapsed"
+                                Margin="4,0,0,0"
+                                VerticalAlignment="Center">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="Cb" Width="22" Height="22" CornerRadius="6" Background="#22FFFFFF">
+                                        <TextBlock Text="✕" Foreground="#DDFFFFFF" FontSize="10" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Cb" Property="Background" Value="#38FFFFFF"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
                     </StackPanel>
                 </DockPanel>
 
@@ -147,6 +232,7 @@
                                     Cursor="Hand"
                                     AllowDrop="True"
                                     Drop="ItemButton_Drop"
+                                    DragOver="ItemButton_DragOver"
                                     ToolTip="{Binding ToolTipText}">
                                 <Button.ContextMenu>
                                     <ContextMenu>
@@ -165,9 +251,13 @@
                                                 BorderBrush="#12FFFFFF"
                                                 BorderThickness="1"
                                                 Padding="6"
+                                                Opacity="{Binding TileOpacity}"
                                                 RenderTransformOrigin="0.5,0.5">
                                             <Border.RenderTransform>
-                                                <RotateTransform x:Name="JiggleRot" Angle="0"/>
+                                                <TransformGroup>
+                                                    <ScaleTransform ScaleX="{Binding TileScale}" ScaleY="{Binding TileScale}"/>
+                                                    <RotateTransform x:Name="JiggleRot" Angle="0"/>
+                                                </TransformGroup>
                                             </Border.RenderTransform>
                                             <Grid>
                                                 <TextBlock Text="{Binding HotkeyHint}"

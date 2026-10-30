@@ -46,3 +46,9 @@ artifacts/
 src/StackBar.Installer/
 *.lnk
 
+# Documentation & handoff documents (keep only README.md)
+docs/
+[Hh][Aa][Nn][Dd][Oo][Ff][Ff].*
+*.doc
+*.docx
+

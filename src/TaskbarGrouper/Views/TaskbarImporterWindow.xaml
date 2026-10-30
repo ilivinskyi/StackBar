@@ -44,14 +44,16 @@
                          Background="Transparent"
                          BorderThickness="0"
                          Foreground="White"
-                         HorizontalContentAlignment="Stretch">
+                         HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                       Foreground="White"
                                       Margin="4,5"
                                       VerticalContentAlignment="Center">
-                                <DockPanel Width="480">
+                                <DockPanel HorizontalAlignment="Stretch" Margin="0,0,8,0">
                                     <Border DockPanel.Dock="Right"
                                             Background="#22FFFFFF"
                                             CornerRadius="6"

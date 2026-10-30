@@ -48,25 +48,69 @@ namespace TaskbarGrouper.Views
         {
             LoadingOverlay.Visibility = Visibility.Visible;
 
-            var discovered = await Task.Run(() => ShortcutService.ScanAllTaskbarAndSystemApps());
+            // Scanning and icon extraction (hundreds of apps) both run off the UI thread;
+            // the icons are frozen BitmapImages, so they can be handed to the UI thread afterwards.
+            var vms = await Task.Run(() =>
+                ShortcutService.ScanAllTaskbarAndSystemApps()
+                    .Select(d => new SelectableShortcutViewModel
+                    {
+                        Item = d.Item,
+                        SourceBadge = d.SourceBadge,
+                        Icon = IconHelper.ExtractIcon(d.Item),
+                        IsSelected = false
+                    })
+                    .ToList());
 
-            var vms = new List<SelectableShortcutViewModel>();
-            foreach (var d in discovered)
-            {
-                var icon = IconHelper.ExtractIcon(d.Item.TargetPath, d.Item.CustomIconPath);
-                vms.Add(new SelectableShortcutViewModel
-                {
-                    Item = d.Item,
-                    SourceBadge = d.SourceBadge,
-                    Icon = icon,
-                    IsSelected = false
-                });
-            }
+            if (!IsLoaded) return; // closed while scanning
 
             _allItems = vms;
             _filteredItems = _allItems;
             ShortcutsList.ItemsSource = _filteredItems;
             LoadingOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private static string NormalizeForSearch(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            var sb = new System.Text.StringBuilder(s.Length);
+            char last = '\0';
+            foreach (char c in s.ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(c))
+                {
+                    if (c != last)
+                    {
+                        sb.Append(c);
+                        last = c;
+                    }
+                }
+            }
+            return sb.ToString();
+        }
+
+        private static bool MatchesSearch(SelectableShortcutViewModel vm, string query, string normQuery)
+        {
+            string name = vm.Item.Name ?? string.Empty;
+            string target = vm.Item.TargetPath ?? string.Empty;
+            string badge = vm.SourceBadge ?? string.Empty;
+
+            if (name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                target.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                badge.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrEmpty(normQuery))
+            {
+                string normName = NormalizeForSearch(name);
+                if (normName.IndexOf(normQuery, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+
+                string normTarget = NormalizeForSearch(target);
+                if (normTarget.IndexOf(normQuery, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            }
+
+            return false;
         }
 
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -78,9 +122,9 @@ namespace TaskbarGrouper.Views
             }
             else
             {
+                string normQ = NormalizeForSearch(q);
                 _filteredItems = _allItems
-                    .Where(x => x.Item.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                x.SourceBadge.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .Where(x => MatchesSearch(x, q, normQ))
                     .ToList();
             }
             ShortcutsList.ItemsSource = _filteredItems;

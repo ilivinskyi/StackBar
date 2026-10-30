@@ -61,11 +61,10 @@ namespace TaskbarGrouper
                 NativePositioningService.GetCursorPos(out var pt);
                 if (IpcService.SendCommand($"OPEN|{groupId}|{pt.X}|{pt.Y}"))
                 {
-                    // Resident instance handled it immediately (<15ms)
                     return;
                 }
             }
-            else if (!isSetup && !isUninstall)
+            else if (!isSetup && !isUninstall && !startMinimized)
             {
                 // Plain launch: If resident instance is running, tell it to show the manager
                 if (IpcService.SendCommand("MANAGER"))
@@ -74,18 +73,26 @@ namespace TaskbarGrouper
                 }
             }
 
-            // Check single instance mutex for the resident tray runner
-            string userSid = WindowsIdentity.GetCurrent().User?.Value ?? "User";
-            string modePrefix = AppInfo.IsPortableMode ? "Portable" : "Installed";
-            string mutexName = $"Local\\StackBar.{modePrefix}.{userSid}";
-            bool createdNew;
-            _instanceMutex = new Mutex(true, mutexName, out createdNew);
-
-            if (!createdNew && !isSetup && !isUninstall)
+            // Only the resident app owns the single-instance mutex. Setup/uninstall must not take it,
+            // otherwise the app that setup launches sees the mutex as taken and exits silently.
+            if (!isSetup && !isUninstall)
             {
-                // Another instance became active in the meantime
-                IpcService.SendCommand(string.IsNullOrEmpty(groupId) ? "MANAGER" : $"OPEN|{groupId}|0|0");
-                return;
+                string userSid = WindowsIdentity.GetCurrent().User?.Value ?? "User";
+                string modePrefix = AppInfo.IsPortableMode ? "Portable" : "Installed";
+                string mutexName = $"Local\\StackBar.{modePrefix}.{userSid}";
+                _instanceMutex = new Mutex(true, mutexName, out bool createdNew);
+
+                if (!createdNew)
+                {
+                    // Already resident (e.g. --tray at login while running): nothing to show
+                    if (startMinimized && string.IsNullOrEmpty(groupId)) return;
+
+                    // Another instance became resident in the meantime: give its pipe server time to come up
+                    NativePositioningService.GetCursorPos(out var cursor);
+                    string command = string.IsNullOrEmpty(groupId) ? "MANAGER" : $"OPEN|{groupId}|{cursor.X}|{cursor.Y}";
+                    IpcService.SendCommand(command, connectTimeoutMs: 1500);
+                    return;
+                }
             }
 
             // Now load WPF subsystem in separate method to keep JIT lean
