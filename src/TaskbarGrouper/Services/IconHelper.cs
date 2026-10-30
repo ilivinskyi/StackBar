@@ -73,32 +73,10 @@ public static class IconHelper
 
         try
         {
-            // Try ExtraLarge (48x48) / Jumbo (256x256) Shell Image List first for ultra-crisp icons
+            // Try ExtraLarge (48x48) Shell Image List first for crisp icons
             var shinfo = new SHFILEINFO();
-            IntPtr res = SHGetFileInfo(path, 0, ref shinfo, (uint)Marshal.SizeOf(shinfo), SHGFI_SYSICONINDEX);
-            if (res != IntPtr.Zero)
-            {
-                Guid iidImageList = new("46EB5926-582E-4017-9FDF-E8998DAA0950");
-                if (SHGetImageList(SHIL_EXTRALARGE, ref iidImageList, out var imgList) == 0 && imgList != null)
-                {
-                    if (imgList.GetIcon(shinfo.iIcon, 1, out IntPtr hIcon) == 0 && hIcon != IntPtr.Zero)
-                    {
-                        try
-                        {
-                            using var ico = Icon.FromHandle(hIcon);
-                            return new Bitmap(ico.ToBitmap());
-                        }
-                        finally
-                        {
-                            DestroyIcon(hIcon);
-                        }
-                    }
-                }
-            }
-
-            // Fallback to standard SHGFI_LARGEICON
-            res = SHGetFileInfo(path, 0, ref shinfo, (uint)Marshal.SizeOf(shinfo), SHGFI_ICON | SHGFI_LARGEICON);
-            if (res != IntPtr.Zero && shinfo.hIcon != IntPtr.Zero)
+            IntPtr hImgList = SHGetFileInfo(path, 0, ref shinfo, (uint)Marshal.SizeOf(shinfo), SHGFI_ICON | SHGFI_LARGEICON);
+            if (hImgList != IntPtr.Zero && shinfo.hIcon != IntPtr.Zero)
             {
                 try
                 {

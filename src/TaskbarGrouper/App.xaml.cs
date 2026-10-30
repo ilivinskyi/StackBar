@@ -17,6 +17,11 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        DispatcherUnhandledException += (_, args) =>
+        {
+            System.Windows.MessageBox.Show($"Unexpected error:\n{args.Exception.Message}", "StackBar", MessageBoxButton.OK, MessageBoxImage.Warning);
+            args.Handled = true;
+        };
         _configService = new ConfigService();
 
         // Check command line args: e.g., --group "gaming"

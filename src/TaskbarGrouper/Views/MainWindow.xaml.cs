@@ -241,29 +241,36 @@ public partial class MainWindow : Window
     {
         if (_selectedGroup == null) return;
 
-        var discovered = ShortcutService.ScanPinnedTaskbarShortcuts();
-        if (discovered.Count == 0)
+        try
         {
-            System.Windows.MessageBox.Show(
-                "No pinned `.lnk` shortcuts were found in the standard Windows Quick Launch TaskBar folder.\nYou can still drag & drop any shortcuts or .exe files directly into the list!",
-                "StackBar Importer", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var dialog = new TaskbarImporterWindow(discovered) { Owner = this };
-        if (dialog.ShowDialog() == true && dialog.SelectedItems.Count > 0)
-        {
-            foreach (var item in dialog.SelectedItems)
+            var discovered = ShortcutService.ScanPinnedTaskbarShortcuts();
+            if (discovered.Count == 0)
             {
-                if (!_selectedGroup.Items.Any(existing => existing.TargetPath.Equals(item.TargetPath, StringComparison.OrdinalIgnoreCase)))
-                {
-                    _selectedGroup.Items.Add(item);
-                }
+                System.Windows.MessageBox.Show(
+                    "No pinned `.lnk` shortcuts were found in the standard Windows Quick Launch TaskBar folder.\nYou can still drag & drop any shortcuts or .exe files directly into the list!",
+                    "StackBar Importer", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
             }
-            _configService.Save(_config);
-            RefreshItemsList();
-            RefreshGroupsList();
-            StatusText.Text = $"Imported {dialog.SelectedItems.Count} app(s) into '{_selectedGroup.Name}'!";
+
+            var dialog = new TaskbarImporterWindow(discovered) { Owner = IsLoaded ? this : null };
+            if (dialog.ShowDialog() == true && dialog.SelectedItems.Count > 0)
+            {
+                foreach (var item in dialog.SelectedItems)
+                {
+                    if (!_selectedGroup.Items.Any(existing => existing.TargetPath.Equals(item.TargetPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _selectedGroup.Items.Add(item);
+                    }
+                }
+                _configService.Save(_config);
+                RefreshItemsList();
+                RefreshGroupsList();
+                StatusText.Text = $"Imported {dialog.SelectedItems.Count} app(s) into '{_selectedGroup.Name}'!";
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"Could not open Taskbar Importer:\n{ex.Message}", "StackBar Importer", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

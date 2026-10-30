@@ -180,13 +180,25 @@ public partial class FlyoutWindow : Window
     {
         try
         {
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string workDir = !string.IsNullOrWhiteSpace(vm.Item.WorkingDirectory)
+                ? Environment.ExpandEnvironmentVariables(vm.Item.WorkingDirectory)
+                : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
+            {
+                var resolvedTarget = IconHelper.ResolveFullPath(vm.Item.TargetPath);
+                var targetDir = !string.IsNullOrEmpty(resolvedTarget) ? Path.GetDirectoryName(resolvedTarget) : null;
+                workDir = IsTerminalOrShellApp(vm.Item.TargetPath, vm.Name) || string.IsNullOrWhiteSpace(targetDir) || !Directory.Exists(targetDir)
+                    ? userProfile
+                    : targetDir;
+            }
+
             var psi = new ProcessStartInfo
             {
                 FileName = vm.Item.TargetPath,
                 Arguments = vm.Item.Arguments,
-                WorkingDirectory = string.IsNullOrWhiteSpace(vm.Item.WorkingDirectory)
-                    ? Environment.CurrentDirectory
-                    : vm.Item.WorkingDirectory,
+                WorkingDirectory = workDir,
                 UseShellExecute = true
             };
             if (asAdmin)
@@ -202,5 +214,15 @@ public partial class FlyoutWindow : Window
 
         if (_group.CloseOnLaunch)
             Close();
+    }
+
+    private static bool IsTerminalOrShellApp(string targetPath, string displayName)
+    {
+        string file = Path.GetFileName(targetPath).ToLowerInvariant();
+        string name = displayName.ToLowerInvariant();
+        return file is "cmd.exe" or "powershell.exe" or "pwsh.exe" or "wt.exe" or "bash.exe"
+               || name.Contains("terminal")
+               || name.Contains("command prompt")
+               || name.Contains("powershell");
     }
 }

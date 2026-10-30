@@ -131,20 +131,35 @@ public static class ShortcutService
     public static List<GroupItem> ScanPinnedTaskbarShortcuts()
     {
         var results = new List<GroupItem>();
-        string pinnedDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
-
-        if (!Directory.Exists(pinnedDir))
-            return results;
-
-        foreach (var file in Directory.GetFiles(pinnedDir, "*.lnk"))
+        try
         {
-            var item = ParseShortcut(file);
-            if (item != null && !item.TargetPath.Contains("StackBar", StringComparison.OrdinalIgnoreCase))
+            string pinnedDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
+
+            if (!Directory.Exists(pinnedDir))
+                return results;
+
+            foreach (var file in Directory.GetFiles(pinnedDir, "*.lnk"))
             {
-                results.Add(item);
+                try
+                {
+                    if (Path.GetFileName(file).Contains("StackBar", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var item = ParseShortcut(file);
+                    if (item != null)
+                        results.Add(item);
+                }
+                catch
+                {
+                    // Skip unreadable individual shortcuts without crashing
+                }
             }
+        }
+        catch
+        {
+            // Ignore directory enumeration errors
         }
 
         return results;
@@ -155,54 +170,67 @@ public static class ShortcutService
         if (!File.Exists(lnkOrFilePath))
             return null;
 
+        string name = Path.GetFileNameWithoutExtension(lnkOrFilePath);
+
         if (!lnkOrFilePath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
         {
+            string? dir = Path.GetDirectoryName(lnkOrFilePath);
             return new GroupItem
             {
-                Name = Path.GetFileNameWithoutExtension(lnkOrFilePath),
+                Name = name,
                 TargetPath = lnkOrFilePath,
-                WorkingDirectory = Path.GetDirectoryName(lnkOrFilePath) ?? string.Empty
+                WorkingDirectory = !string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir)
+                    ? dir
+                    : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
             };
         }
+
+        // For .lnk files, we store the .lnk path itself as TargetPath so Windows Shell launches UWP apps,
+        // Steam links, and custom shortcut properties natively, while we read WorkingDirectory via WScript.Shell safely.
+        string workingDir = string.Empty;
+        string customIcon = lnkOrFilePath;
 
         try
         {
-            var link = (IShellLinkW)new ShellLink();
-            ((IPersistFile)link).Load(lnkOrFilePath, 0);
-
-            var targetSb = new StringBuilder(260);
-            link.GetPath(targetSb, targetSb.Capacity, out _, 0);
-
-            var argsSb = new StringBuilder(1024);
-            link.GetArguments(argsSb, argsSb.Capacity);
-
-            var workDirSb = new StringBuilder(260);
-            link.GetWorkingDirectory(workDirSb, workDirSb.Capacity);
-
-            var iconSb = new StringBuilder(260);
-            link.GetIconLocation(iconSb, iconSb.Capacity, out _);
-
-            string target = targetSb.ToString();
-            string iconPath = Environment.ExpandEnvironmentVariables(iconSb.ToString());
-
-            // Keep the .lnk itself as TargetPath if target is empty (e.g., UWP/Store shell link),
-            // since Process.Start(UseShellExecute=true) launches .lnk files directly and preserves custom icons!
-            return new GroupItem
+            Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType != null)
             {
-                Name = Path.GetFileNameWithoutExtension(lnkOrFilePath),
-                TargetPath = string.IsNullOrWhiteSpace(target) ? lnkOrFilePath : target,
-                Arguments = argsSb.ToString(),
-                WorkingDirectory = workDirSb.ToString(),
-                CustomIconPath = File.Exists(iconPath) ? iconPath : lnkOrFilePath
-            };
+                dynamic? shell = Activator.CreateInstance(shellType);
+                if (shell != null)
+                {
+                    dynamic shortcut = shell.CreateShortcut(lnkOrFilePath);
+                    string? wd = shortcut.WorkingDirectory as string;
+                    if (!string.IsNullOrWhiteSpace(wd))
+                    {
+                        workingDir = Environment.ExpandEnvironmentVariables(wd);
+                    }
+
+                    string? iconLoc = shortcut.IconLocation as string;
+                    if (!string.IsNullOrWhiteSpace(iconLoc))
+                    {
+                        string rawIcon = Environment.ExpandEnvironmentVariables(iconLoc.Split(',')[0].Trim());
+                        if (File.Exists(rawIcon))
+                            customIcon = rawIcon;
+                    }
+                }
+            }
         }
         catch
         {
-            return new GroupItem
-            {
-                Name = Path.GetFileNameWithoutExtension(lnkOrFilePath),
-                TargetPath = lnkOrFilePath
-            };
+            // Fallback safely to the .lnk file itself
         }
+
+        if (string.IsNullOrWhiteSpace(workingDir) || !Directory.Exists(workingDir))
+        {
+            workingDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        return new GroupItem
+        {
+            Name = name,
+            TargetPath = lnkOrFilePath,
+            WorkingDirectory = workingDir,
+            CustomIconPath = customIcon
+        };
     }
 }
