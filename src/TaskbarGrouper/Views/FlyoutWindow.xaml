@@ -1,0 +1,84 @@
+<Window x:Class="TaskbarGrouper.Views.FlyoutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Group Flyout"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight"
+        Loaded="Window_Loaded"
+        Deactivated="Window_Deactivated"
+        KeyDown="Window_KeyDown">
+
+    <Border Margin="12"
+            CornerRadius="12"
+            Background="{StaticResource FlyoutBackgroundBrush}"
+            BorderBrush="{StaticResource FlyoutBorderBrush}"
+            BorderThickness="1"
+            Padding="14">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.45" Color="Black"/>
+        </Border.Effect>
+
+        <StackPanel>
+            <DockPanel Margin="4,0,4,10">
+                <TextBlock x:Name="GroupTitleText"
+                           Text="Group"
+                           Foreground="#E0FFFFFF"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"/>
+            </DockPanel>
+
+            <ItemsControl x:Name="ItemsGrid">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid x:Name="UniformItemsPanel" Columns="4"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Click="ItemButton_Click"
+                                Tag="{Binding}"
+                                Width="76"
+                                Height="76"
+                                Margin="4"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Cursor="Hand"
+                                ToolTip="{Binding Name}">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="ItemBorder"
+                                            CornerRadius="8"
+                                            Background="Transparent"
+                                            Padding="6">
+                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                            <Grid Width="32" Height="32" Margin="0,0,0,6">
+                                                <Image Source="{Binding Icon}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                            </Grid>
+                                            <TextBlock Text="{Binding Name}"
+                                                       Foreground="White"
+                                                       FontSize="11"
+                                                       TextAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxWidth="64"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource ItemHoverBrush}"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </Border>
+</Window>
