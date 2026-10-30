@@ -90,6 +90,30 @@
                         <TextBlock x:Name="ItemCountBadge" Text="0" Foreground="#AAFFFFFF" FontSize="10.5" FontWeight="SemiBold"/>
                     </Border>
 
+                    <Button x:Name="BackButton"
+                            DockPanel.Dock="Left"
+                            Click="BackButton_Click"
+                            ToolTip="Go back (Backspace)"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Cursor="Hand"
+                            Padding="6,2"
+                            Margin="0,0,8,0"
+                            Visibility="Collapsed">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="Bb" CornerRadius="6" Padding="6,3" Background="#20FFFFFF">
+                                    <TextBlock Text="← Back" Foreground="#DDD" FontSize="11" FontWeight="SemiBold"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="Bb" Property="Background" Value="#40FFFFFF"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Border x:Name="AccentDot" Width="8" Height="8" CornerRadius="4" Background="#3A6DF0" Margin="0,0,8,0" VerticalAlignment="Center"/>
                         <TextBlock x:Name="GroupTitleText" Text="Stack" Foreground="#F5FFFFFF" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center"/>

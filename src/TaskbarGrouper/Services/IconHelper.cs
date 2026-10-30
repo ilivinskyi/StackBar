@@ -85,6 +85,51 @@ namespace TaskbarGrouper.Services
 
             if (string.IsNullOrWhiteSpace(path)) return null;
 
+            // 0. Direct Image formats (.png, .jpg, .jpeg, .bmp, .ico)
+            string ext = Path.GetExtension(path);
+            if (!string.IsNullOrEmpty(ext))
+            {
+                if (ext.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+                    ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                    ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+                    ext.Equals(".bmp", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        if (File.Exists(path))
+                        {
+                            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                            using (var img = Image.FromStream(fs))
+                            {
+                                return new Bitmap(img);
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                else if (ext.Equals(".ico", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+                {
+                    try
+                    {
+                        using (var ico = new Icon(path, 256, 256))
+                        {
+                            return ico.ToBitmap();
+                        }
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            using (var ico = new Icon(path))
+                            {
+                                return ico.ToBitmap();
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+
             // 1. High-Res via IShellItemImageFactory (handles files, .lnk, shell:AppsFolder)
             try
             {
@@ -175,8 +220,26 @@ namespace TaskbarGrouper.Services
                     g.DrawPath(borderPen, bgPath);
                 }
 
-                bool drewMiniGrid = false;
-                if (group.IconMode == FolderIconMode.MiniGrid2x2 && group.Items != null && group.Items.Count > 0)
+                bool drewContent = false;
+
+                // 1. Custom Icon Mode
+                if (group.IconMode == FolderIconMode.CustomIco && !string.IsNullOrWhiteSpace(group.CustomFolderIconPath))
+                {
+                    var customBmp = ExtractBitmap(group.CustomFolderIconPath!);
+                    if (customBmp != null)
+                    {
+                        using (customBmp)
+                        {
+                            drewContent = true;
+                            // Inner squircle is 10..246 (width 236), so 164x164 centered at (46, 46) gives a gorgeous macOS-style folder emblem
+                            var dest = new Rectangle(46, 46, 164, 164);
+                            g.DrawImage(customBmp, dest);
+                        }
+                    }
+                }
+
+                // 2. MiniGrid 2x2 Mode
+                if (!drewContent && group.IconMode == FolderIconMode.MiniGrid2x2 && group.Items != null && group.Items.Count > 0)
                 {
                     var subIcons = new List<Bitmap>();
                     for (int i = 0; i < group.Items.Count && subIcons.Count < 4; i++)
@@ -187,7 +250,7 @@ namespace TaskbarGrouper.Services
 
                     if (subIcons.Count > 0)
                     {
-                        drewMiniGrid = true;
+                        drewContent = true;
                         Rectangle[] slots =
                         {
                             new Rectangle(36, 36, 84, 84),
@@ -212,7 +275,8 @@ namespace TaskbarGrouper.Services
                     }
                 }
 
-                if (!drewMiniGrid)
+                // 3. Emoji Glyph Mode (or fallback)
+                if (!drewContent)
                 {
                     string glyph = string.IsNullOrWhiteSpace(group.IconGlyph) ? "📁" : group.IconGlyph;
                     using (var font = new Font("Segoe UI Emoji", 110, System.Drawing.FontStyle.Regular, GraphicsUnit.Pixel))

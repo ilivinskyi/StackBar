@@ -117,6 +117,9 @@ namespace TaskbarGrouper.Models
             set { if (value != null) Items = value; }
         }
 
+        [IgnoreDataMember]
+        public System.Windows.Media.ImageSource? Thumbnail => Services.IconHelper.GenerateGroupPreviewImage(this);
+
         [OnDeserializing]
         internal void OnDeserializing(StreamingContext context)
         {

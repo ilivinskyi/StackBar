@@ -33,6 +33,9 @@ namespace TaskbarGrouper.Views
         private readonly int? _cursorY;
         private readonly Action? _onEditRequested;
         private readonly List<FlyoutItemViewModel> _viewModels = new List<FlyoutItemViewModel>();
+        private readonly Stack<List<TaskbarGrouper.Models.GroupItem>> _navHistory = new Stack<List<TaskbarGrouper.Models.GroupItem>>();
+        private readonly Stack<string> _titleHistory = new Stack<string>();
+        private List<TaskbarGrouper.Models.GroupItem> _currentItems = new List<TaskbarGrouper.Models.GroupItem>();
         private bool _isClosing;
 
         public int Columns => Polyfills.Clamp(_group.Columns, 2, 8);
@@ -56,6 +59,7 @@ namespace TaskbarGrouper.Views
 
         private void PopulateViewModels(List<TaskbarGrouper.Models.GroupItem> items)
         {
+            _currentItems = items ?? new List<TaskbarGrouper.Models.GroupItem>();
             _viewModels.Clear();
             if (items == null || items.Count == 0)
             {
@@ -158,8 +162,22 @@ namespace TaskbarGrouper.Views
 
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
+            if (e.Key == Key.Back)
+            {
+                if (NavigateBack())
+                {
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             if (e.Key == Key.Escape)
             {
+                if (NavigateBack())
+                {
+                    e.Handled = true;
+                    return;
+                }
                 Close();
                 return;
             }
@@ -283,10 +301,35 @@ namespace TaskbarGrouper.Views
                 Close();
         }
 
+        private void BackButton_Click(object sender, RoutedEventArgs e)
+        {
+            NavigateBack();
+        }
+
+        private bool NavigateBack()
+        {
+            if (_navHistory.Count > 0)
+            {
+                var prevItems = _navHistory.Pop();
+                string prevTitle = _titleHistory.Pop();
+                GroupTitleText.Text = prevTitle;
+                ItemCountBadge.Text = $"{prevItems.Count}";
+                PopulateViewModels(prevItems);
+                if (_navHistory.Count == 0)
+                    BackButton.Visibility = Visibility.Collapsed;
+                return true;
+            }
+            return false;
+        }
+
         private void DisplaySubdirectoryContents(string folderPath)
         {
             try
             {
+                _navHistory.Push(new List<TaskbarGrouper.Models.GroupItem>(_currentItems));
+                _titleHistory.Push(GroupTitleText.Text);
+                BackButton.Visibility = Visibility.Visible;
+
                 GroupTitleText.Text = $"📁  {Path.GetFileName(folderPath.TrimEnd('\\'))}";
                 var subItems = new List<TaskbarGrouper.Models.GroupItem>();
 

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using System.Windows.Media;
@@ -125,7 +126,40 @@ namespace TaskbarGrouper.Views
             if (_selectedGroup == null) return;
             LiveFolderIconPreview.Source = IconHelper.GenerateGroupPreviewImage(_selectedGroup);
             SelectedGroupHeader.Text = $"{_selectedGroup.IconGlyph}  {_selectedGroup.Name}";
-            SelectedGroupSubtext.Text = $"{_selectedGroup.Items.Count} app(s) • {(_selectedGroup.IconMode == FolderIconMode.MiniGrid2x2 ? "iOS 2x2 Grid Icon" : "Emoji Badge Icon")}";
+            string modeDesc = _selectedGroup.IconMode switch
+            {
+                FolderIconMode.CustomIco => "Custom Cover Icon",
+                FolderIconMode.EmojiGlyph => "Emoji Badge Icon",
+                _ => "iOS 2x2 Grid Icon"
+            };
+            SelectedGroupSubtext.Text = $"{_selectedGroup.Items.Count} app(s) • {modeDesc}";
+        }
+
+        private void UpdateIconControlVisibility()
+        {
+            if (_selectedGroup == null) return;
+
+            if (_selectedGroup.IconMode == FolderIconMode.CustomIco)
+            {
+                CustomIconBar.Visibility = Visibility.Visible;
+                EmojiPresetsBar.Visibility = Visibility.Collapsed;
+                GridModeInfo.Visibility = Visibility.Collapsed;
+                CustomIconPathLabel.Text = !string.IsNullOrWhiteSpace(_selectedGroup.CustomFolderIconPath)
+                    ? $"Active Icon: {Path.GetFileName(_selectedGroup.CustomFolderIconPath)}"
+                    : "No custom icon chosen. Pick a file (.ico, .png, .exe) or click ★ on any app below.";
+            }
+            else if (_selectedGroup.IconMode == FolderIconMode.EmojiGlyph)
+            {
+                CustomIconBar.Visibility = Visibility.Collapsed;
+                EmojiPresetsBar.Visibility = Visibility.Visible;
+                GridModeInfo.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                CustomIconBar.Visibility = Visibility.Collapsed;
+                EmojiPresetsBar.Visibility = Visibility.Collapsed;
+                GridModeInfo.Visibility = Visibility.Visible;
+            }
         }
 
         private void RefreshItemsList()
@@ -136,10 +170,14 @@ namespace TaskbarGrouper.Views
             GroupNameBox.Text = _selectedGroup.Name;
             GroupGlyphBox.Text = _selectedGroup.IconGlyph;
 
-            if (_selectedGroup.IconMode == FolderIconMode.EmojiGlyph)
+            if (_selectedGroup.IconMode == FolderIconMode.CustomIco)
+                StyleCustomRadio.IsChecked = true;
+            else if (_selectedGroup.IconMode == FolderIconMode.EmojiGlyph)
                 StyleEmojiRadio.IsChecked = true;
             else
                 StyleGridRadio.IsChecked = true;
+
+            UpdateIconControlVisibility();
 
             ShowLabelsCheck.IsChecked = _selectedGroup.ShowLabels;
 
@@ -188,10 +226,114 @@ namespace TaskbarGrouper.Views
         private void StyleRadio_Checked(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents || _selectedGroup == null) return;
-            _selectedGroup.IconMode = StyleEmojiRadio.IsChecked == true
-                ? FolderIconMode.EmojiGlyph
-                : FolderIconMode.MiniGrid2x2;
+            if (StyleCustomRadio.IsChecked == true)
+                _selectedGroup.IconMode = FolderIconMode.CustomIco;
+            else if (StyleEmojiRadio.IsChecked == true)
+                _selectedGroup.IconMode = FolderIconMode.EmojiGlyph;
+            else
+                _selectedGroup.IconMode = FolderIconMode.MiniGrid2x2;
+
+            UpdateIconControlVisibility();
             TriggerDebounceSave();
+            RefreshLiveFolderIcon();
+        }
+
+        private void ChooseCustomIcon_Click(object sender, RoutedEventArgs e)
+        {
+            OpenCustomIconPicker();
+        }
+
+        private void LiveFolderIconPreview_Click(object sender, MouseButtonEventArgs e)
+        {
+            OpenCustomIconPicker();
+        }
+
+        private void OpenCustomIconPicker()
+        {
+            if (_selectedGroup == null) return;
+
+            var ofd = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Choose Custom Folder Icon or Image",
+                Filter = "Icons & Images (*.ico;*.png;*.jpg;*.exe;*.dll;*.lnk)|*.ico;*.png;*.jpg;*.jpeg;*.exe;*.dll;*.lnk|Icons (*.ico)|*.ico|Images (*.png;*.jpg)|*.png;*.jpg;*.jpeg|Executables (*.exe;*.dll)|*.exe;*.dll|All Files (*.*)|*.*"
+            };
+
+            if (ofd.ShowDialog() == true)
+            {
+                string? persisted = ShortcutService.PersistCustomFolderIcon(ofd.FileName, _selectedGroup.Id, _configService.AppDataDirectory);
+                if (!string.IsNullOrEmpty(persisted))
+                {
+                    _selectedGroup.CustomFolderIconPath = persisted;
+                    _selectedGroup.IconMode = FolderIconMode.CustomIco;
+                    StyleCustomRadio.IsChecked = true;
+                    UpdateIconControlVisibility();
+                    TriggerDebounceSave();
+                    RefreshLiveFolderIcon();
+                    StatusText.Text = $"Applied custom icon from '{Path.GetFileName(ofd.FileName)}'.";
+                }
+            }
+        }
+
+        private void UseFirstAppIcon_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedGroup == null || _selectedGroup.Items.Count == 0)
+            {
+                StatusText.Text = "Add at least one app to the stack first.";
+                return;
+            }
+
+            var first = _selectedGroup.Items[0];
+            string? persisted = ShortcutService.PersistCustomFolderIcon(first.TargetPath, _selectedGroup.Id, _configService.AppDataDirectory);
+            if (!string.IsNullOrEmpty(persisted))
+            {
+                _selectedGroup.CustomFolderIconPath = persisted;
+                _selectedGroup.IconMode = FolderIconMode.CustomIco;
+                StyleCustomRadio.IsChecked = true;
+                UpdateIconControlVisibility();
+                TriggerDebounceSave();
+                RefreshLiveFolderIcon();
+                StatusText.Text = $"Using '{first.Name}' as folder cover icon.";
+            }
+        }
+
+        private void ClearCustomIcon_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedGroup == null) return;
+            _selectedGroup.CustomFolderIconPath = null;
+            _selectedGroup.IconMode = FolderIconMode.MiniGrid2x2;
+            StyleGridRadio.IsChecked = true;
+            UpdateIconControlVisibility();
+            TriggerDebounceSave();
+            RefreshLiveFolderIcon();
+            StatusText.Text = "Reverted to 2x2 grid icon.";
+        }
+
+        private void EmojiPreset_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedGroup == null || !(sender is FrameworkElement fe) || !(fe.Tag is string glyph)) return;
+            GroupGlyphBox.Text = glyph;
+            _selectedGroup.IconGlyph = glyph;
+            _selectedGroup.IconMode = FolderIconMode.EmojiGlyph;
+            StyleEmojiRadio.IsChecked = true;
+            UpdateIconControlVisibility();
+            TriggerDebounceSave();
+            RefreshLiveFolderIcon();
+        }
+
+        private void SetAsFolderIcon_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedGroup == null || !(sender is FrameworkElement fe) || !(fe.Tag is ManagerItemRowViewModel row)) return;
+            string? persisted = ShortcutService.PersistCustomFolderIcon(row.Model.TargetPath, _selectedGroup.Id, _configService.AppDataDirectory);
+            if (!string.IsNullOrEmpty(persisted))
+            {
+                _selectedGroup.CustomFolderIconPath = persisted;
+                _selectedGroup.IconMode = FolderIconMode.CustomIco;
+                StyleCustomRadio.IsChecked = true;
+                UpdateIconControlVisibility();
+                TriggerDebounceSave();
+                RefreshLiveFolderIcon();
+                StatusText.Text = $"Set '{row.Model.Name}' icon as the cover for '{_selectedGroup.Name}'.";
+            }
         }
 
         private void AccentRadio_Checked(object sender, RoutedEventArgs e)

@@ -211,7 +211,7 @@ namespace TaskbarGrouper.Services
                             {
                                 File.Copy(item.TargetPath, persistentLnk, true);
                                 item.TargetPath = persistentLnk;
-                                if (!string.IsNullOrEmpty(item.CustomIconPath) && item.CustomIconPath.StartsWith(pinnedDir, StringComparison.OrdinalIgnoreCase))
+                                if (!string.IsNullOrEmpty(item.CustomIconPath) && item.CustomIconPath!.StartsWith(pinnedDir, StringComparison.OrdinalIgnoreCase))
                                 {
                                     item.CustomIconPath = persistentLnk;
                                 }
@@ -540,6 +540,41 @@ namespace TaskbarGrouper.Services
             }
 
             return results;
+        }
+
+        public static string? PersistCustomFolderIcon(string sourcePath, string groupId, string appDataDir)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath)) return null;
+
+            string iconsDir = Path.Combine(appDataDir, "Icons");
+            Directory.CreateDirectory(iconsDir);
+
+            string ext = Path.GetExtension(sourcePath).ToLowerInvariant();
+
+            // Direct image file (.png, .ico, .jpg, .jpeg, .bmp)
+            if (ext == ".png" || ext == ".ico" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp")
+            {
+                if (File.Exists(sourcePath))
+                {
+                    string dest = Path.Combine(iconsDir, $"custom_{groupId}{ext}");
+                    File.Copy(sourcePath, dest, true);
+                    return dest;
+                }
+            }
+
+            // Executable, shortcut, or shell app: extract bitmap and save as high-res PNG
+            var bmp = IconHelper.ExtractBitmap(sourcePath);
+            if (bmp != null)
+            {
+                using (bmp)
+                {
+                    string dest = Path.Combine(iconsDir, $"custom_{groupId}.png");
+                    bmp.Save(dest, System.Drawing.Imaging.ImageFormat.Png);
+                    return dest;
+                }
+            }
+
+            return null;
         }
     }
 }

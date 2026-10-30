@@ -7,7 +7,9 @@ dotnet build "$root\src\TaskbarGrouper\TaskbarGrouper.csproj" -c Release --no-re
 
 Write-Host "2/3 Staging standalone artifacts..." -ForegroundColor Cyan
 $artifactsDir = Join-Path $root "artifacts"
-if (Test-Path $artifactsDir) { Remove-Item $artifactsDir -Recurse -Force }
+if (Test-Path $artifactsDir) {
+    Get-ChildItem -Path $artifactsDir -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
 New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
 
 $appExe = Join-Path $buildOutDir "StackBar.exe"

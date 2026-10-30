@@ -15,11 +15,12 @@
 - **Portable Edition Supported**: Runs completely self-contained from a folder or USB drive with isolated `./data/` storage, leaving zero registry or AppData footprint. Can run simultaneously alongside an installed copy without IPC collisions.
 - **Separate Pinned Taskbar Folders**: Generates custom `.lnk` shortcuts per category with distinct `AppUserModelID`s (`StackBar.Group.<id>`), allowing you to pin multiple StackBar folders side-by-side on the taskbar.
 - **Persistent Shortcut Storage**: Shortcuts imported from the pinned taskbar are duplicated to `%AppData%\StackBar\Links` (or `./data/Links` in portable mode) to prevent broken links when unpinning items from Windows.
-- **Folder Navigation & Drill-Down**: Drag and drop real folders into a stack. Clicking a folder drills down directly inside the flyout popup, displaying its subfolders and files for instant launching.
+- **Folder Navigation & Drill-Down**: Drag and drop real folders into a stack. Clicking a folder drills down directly inside the flyout popup, displaying its subfolders and files for instant launching, complete with a `← Back` button and `Backspace` / `Esc` keyboard navigation.
 - **Drag-and-Drop Reordering**: Drag items within the Studio list to reorder them freely. The top 4 items automatically form the 2×2 folder icon.
-- **Dual Icon Engine**:
+- **Triple Icon Engine**:
+  - **Custom Cover Icons**: Pick any `.ico`, `.png`, `.jpg`, `.exe`, or `.dll` file to represent your stack, or click the **★** star button on any app in the list to make its icon the folder's cover.
+  - **Quick Category Presets**: One-click emoji glyphs (`🎮` Games, `💻` Dev, `🌐` Web, `💬` Chat, `🎵` Media, `🎨` Creative, `🛠️` Tools, `📁` Work, `🤖` AI).
   - **iOS 2×2 Mini-Grid**: Automatically composites the first 4 apps inside a folder into a version-hashed 256×256 squircle `.ico` (bypassing Windows taskbar icon cache stalls).
-  - **Emoji Badge Icons**: Choose crisp category emoji glyphs with customizable accent color borders.
 - **Background Tray Daemon**: Sits in the Windows System Tray and listens on a user-scoped named pipe with foreground activation tokens. Rapid clicking toggles the flyout open/closed.
 - **Multi-Source Importer**:
   - Pinned Taskbar icons (`.lnk` & `.url`)
