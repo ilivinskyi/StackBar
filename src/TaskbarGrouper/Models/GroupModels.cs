@@ -19,7 +19,9 @@ public class AppGroup
     public string IconGlyph { get; set; } = "📁";
     public FolderIconMode IconMode { get; set; } = FolderIconMode.MiniGrid2x2;
     public string? CustomFolderIconPath { get; set; }
+    public string AccentColorHex { get; set; } = "#3A6DF0";
     public int Columns { get; set; } = 4;
+    public bool ShowLabels { get; set; } = true;
     public bool CloseOnLaunch { get; set; } = true;
     public List<GroupItem> Items { get; set; } = new();
 }

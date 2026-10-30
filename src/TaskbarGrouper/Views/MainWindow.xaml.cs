@@ -11,10 +11,29 @@ namespace TaskbarGrouper.Views;
 
 public class ManagerItemRowViewModel
 {
+    private readonly Action _onEdited;
     public GroupItemModel Model { get; init; } = null!;
-    public string Name => Model.Name;
-    public string TargetPath => Model.TargetPath;
     public ImageSource? Icon { get; init; }
+
+    public ManagerItemRowViewModel(Action onEdited)
+    {
+        _onEdited = onEdited;
+    }
+
+    public string Name
+    {
+        get => Model.Name;
+        set
+        {
+            if (Model.Name != value)
+            {
+                Model.Name = value;
+                _onEdited();
+            }
+        }
+    }
+
+    public string TargetPath => Model.TargetPath;
 }
 
 public partial class MainWindow : Window
@@ -24,15 +43,29 @@ public partial class MainWindow : Window
     private AppGroup? _selectedGroup;
     private bool _suppressEvents;
 
+    private static readonly string[] AccentHexCodes =
+    {
+        "#3A6DF0", "#8B5CF6", "#10B981", "#F59E0B", "#EF4444", "#64748B"
+    };
+
     public MainWindow(AppConfig config, ConfigService configService)
     {
         InitializeComponent();
         _config = config;
         _configService = configService;
 
+        _suppressEvents = true;
+        RunAtStartupCheck.IsChecked = StartupService.IsRunAtStartupEnabled();
+        _suppressEvents = false;
+
         RefreshGroupsList();
         if (_config.Groups.Count > 0)
             GroupsListBox.SelectedIndex = 0;
+    }
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        NativePositioningService.ApplyWindows11AcrylicEffects(this);
     }
 
     private void RefreshGroupsList()
@@ -44,22 +77,36 @@ public partial class MainWindow : Window
             GroupsListBox.SelectedItem = current;
     }
 
+    private void RefreshLiveFolderIcon()
+    {
+        if (_selectedGroup == null) return;
+        LiveFolderIconPreview.Source = IconHelper.GenerateGroupPreviewImage(_selectedGroup);
+        SelectedGroupHeader.Text = $"{_selectedGroup.IconGlyph}  {_selectedGroup.Name}";
+        SelectedGroupSubtext.Text = $"{_selectedGroup.Items.Count} app(s) • {(_selectedGroup.IconMode == FolderIconMode.MiniGrid2x2 ? "iOS 2x2 Grid Icon" : "Emoji Badge Icon")}";
+    }
+
     private void RefreshItemsList()
     {
         if (_selectedGroup == null) return;
         _suppressEvents = true;
 
-        SelectedGroupHeader.Text = $"{_selectedGroup.IconGlyph}  {_selectedGroup.Name}";
         GroupNameBox.Text = _selectedGroup.Name;
         GroupGlyphBox.Text = _selectedGroup.IconGlyph;
         IconModeCombo.SelectedIndex = _selectedGroup.IconMode == FolderIconMode.EmojiGlyph ? 1 : 0;
         ColumnsCombo.SelectedIndex = Math.Clamp(_selectedGroup.Columns - 3, 0, 3);
+        ShowLabelsCheck.IsChecked = _selectedGroup.ShowLabels;
 
-        ItemsListBox.ItemsSource = _selectedGroup.Items.Select(i => new ManagerItemRowViewModel
+        int accentIdx = Array.FindIndex(AccentHexCodes, c => c.Equals(_selectedGroup.AccentColorHex, StringComparison.OrdinalIgnoreCase));
+        AccentColorCombo.SelectedIndex = accentIdx >= 0 ? accentIdx : 0;
+
+        ItemsListBox.ItemsSource = _selectedGroup.Items.Select(i => new ManagerItemRowViewModel(() => _configService.Save(_config))
         {
             Model = i,
             Icon = IconHelper.ExtractIcon(i.TargetPath, i.CustomIconPath)
         }).ToList();
+
+        EmptyStateOverlay.Visibility = _selectedGroup.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        RefreshLiveFolderIcon();
 
         _suppressEvents = false;
     }
@@ -78,8 +125,8 @@ public partial class MainWindow : Window
         if (_suppressEvents || _selectedGroup == null) return;
         _selectedGroup.Name = GroupNameBox.Text;
         _selectedGroup.IconGlyph = GroupGlyphBox.Text;
-        SelectedGroupHeader.Text = $"{_selectedGroup.IconGlyph}  {_selectedGroup.Name}";
         _configService.Save(_config);
+        RefreshLiveFolderIcon();
         RefreshGroupsList();
     }
 
@@ -90,6 +137,18 @@ public partial class MainWindow : Window
             ? FolderIconMode.EmojiGlyph
             : FolderIconMode.MiniGrid2x2;
         _configService.Save(_config);
+        RefreshLiveFolderIcon();
+    }
+
+    private void AccentColorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || _selectedGroup == null) return;
+        if (AccentColorCombo.SelectedIndex >= 0 && AccentColorCombo.SelectedIndex < AccentHexCodes.Length)
+        {
+            _selectedGroup.AccentColorHex = AccentHexCodes[AccentColorCombo.SelectedIndex];
+            _configService.Save(_config);
+            RefreshLiveFolderIcon();
+        }
     }
 
     private void ColumnsCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -102,6 +161,23 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ShowLabelsCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressEvents || _selectedGroup == null) return;
+        _selectedGroup.ShowLabels = ShowLabelsCheck.IsChecked == true;
+        _configService.Save(_config);
+    }
+
+    private void RunAtStartupCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        bool enabled = RunAtStartupCheck.IsChecked == true;
+        StartupService.SetRunAtStartup(enabled);
+        StatusText.Text = enabled
+            ? "StackBar will now start automatically in your system tray when Windows logs in."
+            : "Removed StackBar from Windows startup.";
+    }
+
     private void AddGroup_Click(object sender, RoutedEventArgs e)
     {
         var newGroup = new AppGroup
@@ -109,6 +185,7 @@ public partial class MainWindow : Window
             Id = $"stack-{Guid.NewGuid().ToString("N")[..6]}",
             Name = $"Stack {_config.Groups.Count + 1}",
             IconGlyph = "🗂️",
+            AccentColorHex = AccentHexCodes[_config.Groups.Count % AccentHexCodes.Length],
             IconMode = FolderIconMode.MiniGrid2x2
         };
         _config.Groups.Add(newGroup);
@@ -137,7 +214,7 @@ public partial class MainWindow : Window
     {
         if (_selectedGroup == null) return;
         _configService.Save(_config);
-        var flyout = new FlyoutWindow(_selectedGroup);
+        var flyout = new FlyoutWindow(_selectedGroup, onEditRequested: () => _ = Activate());
         flyout.Show();
     }
 
@@ -151,9 +228,8 @@ public partial class MainWindow : Window
             string appDataDir = Path.GetDirectoryName(_configService.ConfigPath)!;
             string lnkPath = ShortcutService.CreateGroupShortcut(_selectedGroup, appDataDir);
 
-            // Reveal the generated shortcut in Explorer so the user can right-click -> "Pin to taskbar" or drag it
             Process.Start("explorer.exe", $"/select,\"{lnkPath}\"");
-            StatusText.Text = $"Created '{Path.GetFileName(lnkPath)}'! Right-click it in Explorer -> 'Show more options' -> 'Pin to taskbar'.";
+            StatusText.Text = $"Generated '{Path.GetFileName(lnkPath)}'! Right-click it in Explorer -> 'Pin to taskbar'.";
         }
         catch (Exception ex)
         {
@@ -187,7 +263,7 @@ public partial class MainWindow : Window
             _configService.Save(_config);
             RefreshItemsList();
             RefreshGroupsList();
-            StatusText.Text = $"Imported {dialog.SelectedItems.Count} app(s) from your taskbar!";
+            StatusText.Text = $"Imported {dialog.SelectedItems.Count} app(s) into '{_selectedGroup.Name}'!";
         }
     }
 
@@ -216,16 +292,37 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RemoveSelectedApp_Click(object sender, RoutedEventArgs e)
+    private void MoveItemUp_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedGroup == null) return;
-        if (ItemsListBox.SelectedItem is ManagerItemRowViewModel row)
+        if (_selectedGroup == null || sender is not FrameworkElement { Tag: ManagerItemRowViewModel row }) return;
+        int idx = _selectedGroup.Items.IndexOf(row.Model);
+        if (idx > 0)
         {
-            _selectedGroup.Items.Remove(row.Model);
+            (_selectedGroup.Items[idx - 1], _selectedGroup.Items[idx]) = (_selectedGroup.Items[idx], _selectedGroup.Items[idx - 1]);
             _configService.Save(_config);
             RefreshItemsList();
-            RefreshGroupsList();
         }
+    }
+
+    private void MoveItemDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedGroup == null || sender is not FrameworkElement { Tag: ManagerItemRowViewModel row }) return;
+        int idx = _selectedGroup.Items.IndexOf(row.Model);
+        if (idx >= 0 && idx < _selectedGroup.Items.Count - 1)
+        {
+            (_selectedGroup.Items[idx + 1], _selectedGroup.Items[idx]) = (_selectedGroup.Items[idx], _selectedGroup.Items[idx + 1]);
+            _configService.Save(_config);
+            RefreshItemsList();
+        }
+    }
+
+    private void RemoveRowItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedGroup == null || sender is not FrameworkElement { Tag: ManagerItemRowViewModel row }) return;
+        _selectedGroup.Items.Remove(row.Model);
+        _configService.Save(_config);
+        RefreshItemsList();
+        RefreshGroupsList();
     }
 
     private void ItemsListBox_Drop(object sender, System.Windows.DragEventArgs e)

@@ -28,11 +28,32 @@ public static class IconHelper
     [DllImport("shell32.dll", CharSet = CharSet.Auto)]
     private static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
 
+    [DllImport("shell32.dll", EntryPoint = "#727")]
+    private static extern int SHGetImageList(int iImageList, ref Guid riid, out IImageList ppv);
+
+    [ComImport]
+    [Guid("46EB5926-582E-4017-9FDF-E8998DAA0950")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IImageList
+    {
+        int Add(IntPtr hbmImage, IntPtr hbmMask, ref int pi);
+        int ReplaceIcon(int i, IntPtr hicon, ref int pi);
+        int SetOverlayImage(int iImage, int iOverlay);
+        int Replace(int i, IntPtr hbmImage, IntPtr hbmMask);
+        int AddMasked(IntPtr hbmImage, int crMask, ref int pi);
+        int Draw(IntPtr pimldp);
+        int Remove(int i);
+        int GetIcon(int i, int flags, out IntPtr picon);
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyIcon(IntPtr hIcon);
 
     private const uint SHGFI_ICON = 0x000000100;
     private const uint SHGFI_LARGEICON = 0x000000000;
+    private const uint SHGFI_SYSICONINDEX = 0x000004000;
+    private const int SHIL_JUMBO = 0x4;      // 256x256
+    private const int SHIL_EXTRALARGE = 0x2; // 48x48
 
     public static ImageSource? ExtractIcon(string targetPath, string? customIconPath = null)
     {
@@ -52,14 +73,37 @@ public static class IconHelper
 
         try
         {
+            // Try ExtraLarge (48x48) / Jumbo (256x256) Shell Image List first for ultra-crisp icons
             var shinfo = new SHFILEINFO();
-            IntPtr res = SHGetFileInfo(path, 0, ref shinfo, (uint)Marshal.SizeOf(shinfo), SHGFI_ICON | SHGFI_LARGEICON);
+            IntPtr res = SHGetFileInfo(path, 0, ref shinfo, (uint)Marshal.SizeOf(shinfo), SHGFI_SYSICONINDEX);
+            if (res != IntPtr.Zero)
+            {
+                Guid iidImageList = new("46EB5926-582E-4017-9FDF-E8998DAA0950");
+                if (SHGetImageList(SHIL_EXTRALARGE, ref iidImageList, out var imgList) == 0 && imgList != null)
+                {
+                    if (imgList.GetIcon(shinfo.iIcon, 1, out IntPtr hIcon) == 0 && hIcon != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            using var ico = Icon.FromHandle(hIcon);
+                            return new Bitmap(ico.ToBitmap());
+                        }
+                        finally
+                        {
+                            DestroyIcon(hIcon);
+                        }
+                    }
+                }
+            }
+
+            // Fallback to standard SHGFI_LARGEICON
+            res = SHGetFileInfo(path, 0, ref shinfo, (uint)Marshal.SizeOf(shinfo), SHGFI_ICON | SHGFI_LARGEICON);
             if (res != IntPtr.Zero && shinfo.hIcon != IntPtr.Zero)
             {
                 try
                 {
                     using var ico = Icon.FromHandle(shinfo.hIcon);
-                    return ico.ToBitmap();
+                    return new Bitmap(ico.ToBitmap());
                 }
                 finally
                 {
@@ -68,7 +112,7 @@ public static class IconHelper
             }
 
             using Icon? fallback = Icon.ExtractAssociatedIcon(path);
-            return fallback?.ToBitmap();
+            return fallback != null ? new Bitmap(fallback.ToBitmap()) : null;
         }
         catch
         {
@@ -76,9 +120,98 @@ public static class IconHelper
         }
     }
 
+    public static ImageSource GenerateGroupPreviewImage(AppGroup group)
+    {
+        using var bmp = RenderGroupIconBitmap(group);
+        return BitmapToImageSource(bmp);
+    }
+
+    public static Bitmap RenderGroupIconBitmap(AppGroup group)
+    {
+        const int size = 256;
+        var canvas = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(canvas);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        g.Clear(System.Drawing.Color.Transparent);
+
+        System.Drawing.Color accent = System.Drawing.Color.FromArgb(255, 58, 109, 240);
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(group.AccentColorHex))
+                accent = System.Drawing.ColorTranslator.FromHtml(group.AccentColorHex);
+        }
+        catch { }
+
+        // Draw dark glassmorphic iOS-style squircle container with subtle accent glow
+        using (var bgPath = CreateRoundedRect(new Rectangle(10, 10, size - 20, size - 20), 58))
+        using (var bgBrush = new System.Drawing.Drawing2D.LinearGradientBrush(
+                   new Rectangle(10, 10, size - 20, size - 20),
+                   System.Drawing.Color.FromArgb(245,
+                       Math.Min(255, 28 + accent.R / 7),
+                       Math.Min(255, 30 + accent.G / 7),
+                       Math.Min(255, 42 + accent.B / 7)),
+                   System.Drawing.Color.FromArgb(250, 18, 19, 26),
+                   LinearGradientMode.ForwardDiagonal))
+        using (var borderPen = new System.Drawing.Pen(System.Drawing.Color.FromArgb(135, accent.R, accent.G, accent.B), 5f))
+        {
+            g.FillPath(bgBrush, bgPath);
+            g.DrawPath(borderPen, bgPath);
+        }
+
+        bool drewMiniGrid = false;
+        if (group.IconMode == FolderIconMode.MiniGrid2x2 && group.Items.Count > 0)
+        {
+            var subIcons = group.Items
+                .Take(4)
+                .Select(it => ExtractBitmap(it.TargetPath, it.CustomIconPath))
+                .Where(b => b != null)
+                .ToList();
+
+            if (subIcons.Count > 0)
+            {
+                drewMiniGrid = true;
+                Rectangle[] slots =
+                {
+                    new(36, 36, 84, 84),
+                    new(136, 36, 84, 84),
+                    new(36, 136, 84, 84),
+                    new(136, 136, 84, 84)
+                };
+
+                for (int i = 0; i < Math.Min(4, subIcons.Count); i++)
+                {
+                    using var subBmp = subIcons[i]!;
+                    // Draw subtle mini-tile pill behind each icon
+                    using var slotPath = CreateRoundedRect(slots[i], 18);
+                    using var slotBrush = new SolidBrush(System.Drawing.Color.FromArgb(55, 255, 255, 255));
+                    g.FillPath(slotBrush, slotPath);
+
+                    var inner = Rectangle.Inflate(slots[i], -8, -8);
+                    g.DrawImage(subBmp, inner);
+                }
+            }
+        }
+
+        if (!drewMiniGrid)
+        {
+            string glyph = string.IsNullOrWhiteSpace(group.IconGlyph) ? "📁" : group.IconGlyph;
+            using var font = new Font("Segoe UI Emoji", 110, System.Drawing.FontStyle.Regular, GraphicsUnit.Pixel);
+            using var brush = new SolidBrush(System.Drawing.Color.White);
+            var format = new StringFormat
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center
+            };
+            g.DrawString(glyph, font, brush, new RectangleF(10, 18, size - 20, size - 20), format);
+        }
+
+        return canvas;
+    }
+
     /// <summary>
-    /// Generates a crisp 256x256 PNG-compressed .ico file for a StackBar group, either as an iOS 2x2 mini-grid
-    /// of the first 4 apps inside the folder or as a sleek rounded badge with the group's emoji glyph.
+    /// Generates a crisp 256x256 PNG-compressed .ico file for a StackBar group.
     /// </summary>
     public static string GenerateGroupIcoFile(AppGroup group, string outputDirectory)
     {
@@ -92,71 +225,7 @@ public static class IconHelper
             return group.CustomFolderIconPath;
         }
 
-        const int size = 256;
-        using var canvas = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var g = Graphics.FromImage(canvas))
-        {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            g.Clear(System.Drawing.Color.Transparent);
-
-            // Draw dark glassmorphic iOS-style squircle container
-            using (var bgPath = CreateRoundedRect(new Rectangle(12, 12, size - 24, size - 24), 56))
-            using (var bgBrush = new System.Drawing.Drawing2D.LinearGradientBrush(
-                       new Rectangle(12, 12, size - 24, size - 24),
-                       System.Drawing.Color.FromArgb(235, 38, 40, 52),
-                       System.Drawing.Color.FromArgb(245, 22, 23, 30),
-                       LinearGradientMode.Vertical))
-            using (var borderPen = new System.Drawing.Pen(System.Drawing.Color.FromArgb(90, 255, 255, 255), 4f))
-            {
-                g.FillPath(bgBrush, bgPath);
-                g.DrawPath(borderPen, bgPath);
-            }
-
-            bool drewMiniGrid = false;
-            if (group.IconMode == FolderIconMode.MiniGrid2x2 && group.Items.Count > 0)
-            {
-                var subIcons = group.Items
-                    .Take(4)
-                    .Select(it => ExtractBitmap(it.TargetPath, it.CustomIconPath))
-                    .Where(b => b != null)
-                    .ToList();
-
-                if (subIcons.Count > 0)
-                {
-                    drewMiniGrid = true;
-                    Rectangle[] slots =
-                    {
-                        new(38, 38, 82, 82),
-                        new(136, 38, 82, 82),
-                        new(38, 136, 82, 82),
-                        new(136, 136, 82, 82)
-                    };
-
-                    for (int i = 0; i < Math.Min(4, subIcons.Count); i++)
-                    {
-                        using var subBmp = subIcons[i]!;
-                        g.DrawImage(subBmp, slots[i]);
-                    }
-                }
-            }
-
-            if (!drewMiniGrid)
-            {
-                // Draw centered Emoji/Glyph
-                string glyph = string.IsNullOrWhiteSpace(group.IconGlyph) ? "📁" : group.IconGlyph;
-                using var font = new Font("Segoe UI Emoji", 108, System.Drawing.FontStyle.Regular, GraphicsUnit.Pixel);
-                using var brush = new SolidBrush(System.Drawing.Color.White);
-                var format = new StringFormat
-                {
-                    Alignment = StringAlignment.Center,
-                    LineAlignment = StringAlignment.Center
-                };
-                g.DrawString(glyph, font, brush, new RectangleF(12, 20, size - 24, size - 24), format);
-            }
-        }
-
+        using var canvas = RenderGroupIconBitmap(group);
         SaveBitmapAsPngIco(canvas, icoPath);
         return icoPath;
     }
@@ -170,22 +239,19 @@ public static class IconHelper
         using var fs = new FileStream(icoPath, FileMode.Create, FileAccess.Write);
         using var bw = new BinaryWriter(fs);
 
-        // ICONDIR header (6 bytes)
-        bw.Write((short)0);   // Reserved
-        bw.Write((short)1);   // Type: 1 = ICO
-        bw.Write((short)1);   // Count: 1 image
+        bw.Write((short)0);
+        bw.Write((short)1);
+        bw.Write((short)1);
 
-        // ICONDIRENTRY (16 bytes)
-        bw.Write((byte)0);    // Width: 0 means 256
-        bw.Write((byte)0);    // Height: 0 means 256
-        bw.Write((byte)0);    // Color count
-        bw.Write((byte)0);    // Reserved
-        bw.Write((short)1);   // Color planes
-        bw.Write((short)32);  // Bits per pixel
-        bw.Write(pngBytes.Length); // Size of image data
-        bw.Write(22);         // Offset to image data (6 + 16 = 22)
+        bw.Write((byte)0);
+        bw.Write((byte)0);
+        bw.Write((byte)0);
+        bw.Write((byte)0);
+        bw.Write((short)1);
+        bw.Write((short)32);
+        bw.Write(pngBytes.Length);
+        bw.Write(22);
 
-        // Image payload
         bw.Write(pngBytes);
     }
 
@@ -242,7 +308,6 @@ public static class IconHelper
             }
             catch
             {
-                // Ignore invalid path entries
             }
         }
         return null;

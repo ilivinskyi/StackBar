@@ -78,7 +78,7 @@ public partial class App : System.Windows.Application
                 _activeFlyout.Close();
             }
 
-            _activeFlyout = new FlyoutWindow(group, cursorX, cursorY);
+            _activeFlyout = new FlyoutWindow(group, cursorX, cursorY, onEditRequested: ShowManagerWindow);
             _activeFlyout.Show();
         });
     }

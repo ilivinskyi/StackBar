@@ -13,97 +13,179 @@
         Deactivated="Window_Deactivated"
         KeyDown="Window_KeyDown">
 
-    <Border x:Name="RootBorder"
-            Margin="14"
-            CornerRadius="16"
-            Background="#EE1B1C24"
-            BorderBrush="#38FFFFFF"
-            BorderThickness="1"
-            Padding="14"
-            RenderTransformOrigin="0.5,1.0"
-            Opacity="0">
-        <Border.RenderTransform>
-            <TransformGroup>
-                <ScaleTransform x:Name="PopupScale" ScaleX="0.92" ScaleY="0.92"/>
-                <TranslateTransform x:Name="PopupTranslate" Y="12"/>
-            </TransformGroup>
-        </Border.RenderTransform>
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="22" ShadowDepth="6" Opacity="0.55" Color="Black"/>
-        </Border.Effect>
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-        <StackPanel>
-            <DockPanel Margin="6,0,6,10">
-                <TextBlock x:Name="ItemCountBadge"
-                           DockPanel.Dock="Right"
-                           Text="0 apps"
-                           Foreground="#77FFFFFF"
-                           FontSize="11"
-                           VerticalAlignment="Center"/>
-                <TextBlock x:Name="GroupTitleText"
-                           Text="Stack"
-                           Foreground="#F0FFFFFF"
-                           FontSize="13.5"
-                           FontWeight="SemiBold"
-                           VerticalAlignment="Center"/>
-            </DockPanel>
+        <Border x:Name="RootBorder"
+                Grid.Row="0"
+                CornerRadius="18"
+                BorderThickness="1.2"
+                Padding="16,14,16,14"
+                RenderTransformOrigin="0.5,1.0"
+                Opacity="0">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop x:Name="TopGradStop" Color="#F21E202B" Offset="0.0"/>
+                    <GradientStop Color="#F614151D" Offset="1.0"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <Border.BorderBrush>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop x:Name="BorderAccentStop" Color="#55FFFFFF" Offset="0.0"/>
+                    <GradientStop Color="#22FFFFFF" Offset="1.0"/>
+                </LinearGradientBrush>
+            </Border.BorderBrush>
+            <Border.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="PopupScale" ScaleX="0.90" ScaleY="0.90"/>
+                    <TranslateTransform x:Name="PopupTranslate" Y="14"/>
+                </TransformGroup>
+            </Border.RenderTransform>
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="26" ShadowDepth="8" Opacity="0.6" Color="Black"/>
+            </Border.Effect>
 
-            <ItemsControl x:Name="ItemsGrid">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <UniformGrid Columns="{Binding Columns}"/>
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Button Click="ItemButton_Click"
-                                Tag="{Binding}"
-                                Width="80"
-                                Height="80"
-                                Margin="3"
-                                Background="Transparent"
-                                BorderThickness="0"
-                                Cursor="Hand"
-                                ToolTip="{Binding Name}">
-                            <Button.ContextMenu>
-                                <ContextMenu>
-                                    <MenuItem Header="Launch" Click="ContextLaunch_Click" CommandParameter="{Binding}"/>
-                                    <MenuItem Header="Run as Administrator" Click="ContextRunAdmin_Click" CommandParameter="{Binding}"/>
-                                    <MenuItem Header="Open File Location" Click="ContextOpenLocation_Click" CommandParameter="{Binding}"/>
-                                </ContextMenu>
-                            </Button.ContextMenu>
-                            <Button.Template>
-                                <ControlTemplate TargetType="Button">
-                                    <Border x:Name="ItemBorder"
-                                            CornerRadius="10"
-                                            Background="Transparent"
-                                            Padding="6">
-                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                            <Grid Width="36" Height="36" Margin="0,0,0,6">
-                                                <Image Source="{Binding Icon}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+            <StackPanel>
+                <!-- Header Row -->
+                <DockPanel Margin="4,0,4,10">
+                    <Button DockPanel.Dock="Right"
+                            Click="EditStackButton_Click"
+                            ToolTip="Edit this Stack in StackBar Manager"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Cursor="Hand"
+                            Padding="6,2">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="GearBorder" CornerRadius="6" Padding="6,3" Background="Transparent">
+                                    <TextBlock Text="⚙" Foreground="#88FFFFFF" FontSize="12"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="GearBorder" Property="Background" Value="#25FFFFFF"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+
+                    <Border x:Name="CountPill"
+                            DockPanel.Dock="Right"
+                            CornerRadius="8"
+                            Background="#1FFFFFFF"
+                            Padding="7,2"
+                            Margin="0,0,4,0"
+                            VerticalAlignment="Center">
+                        <TextBlock x:Name="ItemCountBadge"
+                                   Text="0"
+                                   Foreground="#AAFFFFFF"
+                                   FontSize="10.5"
+                                   FontWeight="SemiBold"/>
+                    </Border>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border x:Name="AccentDot" Width="8" Height="8" CornerRadius="4" Background="#3A6DF0" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="GroupTitleText"
+                                   Text="Stack"
+                                   Foreground="#F5FFFFFF"
+                                   FontSize="13.5"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- Subtle Hairline Divider -->
+                <Border Height="1" Background="#1AFFFFFF" Margin="2,0,2,10"/>
+
+                <!-- Apps Grid -->
+                <ItemsControl x:Name="ItemsGrid">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <UniformGrid Columns="{Binding Columns}"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button Click="ItemButton_Click"
+                                    Tag="{Binding}"
+                                    Width="82"
+                                    Height="{Binding TileHeight}"
+                                    Margin="3"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Cursor="Hand"
+                                    ToolTip="{Binding ToolTipText}">
+                                <Button.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Launch App" Click="ContextLaunch_Click" CommandParameter="{Binding}"/>
+                                        <MenuItem Header="Run as Administrator" Click="ContextRunAdmin_Click" CommandParameter="{Binding}"/>
+                                        <MenuItem Header="Open File Location" Click="ContextOpenLocation_Click" CommandParameter="{Binding}"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="ItemBorder"
+                                                CornerRadius="12"
+                                                Background="#08FFFFFF"
+                                                BorderBrush="#12FFFFFF"
+                                                BorderThickness="1"
+                                                Padding="6"
+                                                RenderTransformOrigin="0.5,0.5">
+                                            <Border.RenderTransform>
+                                                <ScaleTransform x:Name="TileScale" ScaleX="1" ScaleY="1"/>
+                                            </Border.RenderTransform>
+                                            <Grid>
+                                                <!-- Hotkey badge (1..9) -->
+                                                <TextBlock Text="{Binding HotkeyHint}"
+                                                           HorizontalAlignment="Right"
+                                                           VerticalAlignment="Top"
+                                                           FontSize="9"
+                                                           Foreground="#44FFFFFF"
+                                                           Margin="0,-2,2,0"/>
+
+                                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                    <Grid Width="38" Height="38" Margin="0,2,0,4">
+                                                        <Image Source="{Binding Icon}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding Name}"
+                                                               Visibility="{Binding LabelVisibility}"
+                                                               Foreground="#EEFFFFFF"
+                                                               FontSize="11"
+                                                               FontWeight="Medium"
+                                                               TextAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               MaxWidth="70"/>
+                                                </StackPanel>
                                             </Grid>
-                                            <TextBlock Text="{Binding Name}"
-                                                       Foreground="#F2FFFFFF"
-                                                       FontSize="11"
-                                                       TextAlignment="Center"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       MaxWidth="68"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="ItemBorder" Property="Background" Value="#28FFFFFF"/>
-                                        </Trigger>
-                                        <Trigger Property="IsPressed" Value="True">
-                                            <Setter TargetName="ItemBorder" Property="Background" Value="#40FFFFFF"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </Button.Template>
-                        </Button>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </StackPanel>
-    </Border>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="ItemBorder" Property="Background" Value="#2AFFFFFF"/>
+                                                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="#48FFFFFF"/>
+                                            </Trigger>
+                                            <Trigger Property="IsPressed" Value="True">
+                                                <Setter TargetName="ItemBorder" Property="Background" Value="#40FFFFFF"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
+        <!-- Bottom Caret Arrow pointing to the clicked Taskbar Icon -->
+        <Canvas x:Name="CaretCanvas" Grid.Row="1" Height="10" HorizontalAlignment="Stretch" ClipToBounds="False">
+            <Polygon x:Name="CaretPolygon"
+                     Points="0,0 16,0 8,9"
+                     Fill="#F614151D"
+                     Stroke="#33FFFFFF"
+                     StrokeThickness="1"/>
+        </Canvas>
+    </Grid>
 </Window>
