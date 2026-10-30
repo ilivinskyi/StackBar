@@ -57,6 +57,27 @@ namespace TaskbarGrouper.Services
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool DeleteObject(IntPtr hObject);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool DestroyIcon(IntPtr hIcon);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct SHFILEINFO
+        {
+            public IntPtr hIcon;
+            public int iIcon;
+            public uint dwAttributes;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szDisplayName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+            public string szTypeName;
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
+
+        private const uint SHGFI_ICON = 0x000000100;
+        private const uint SHGFI_LARGEICON = 0x000000000;
+
         private static readonly Guid IShellItemImageFactoryGuid = new Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b");
         private static readonly Dictionary<string, ImageSource> _iconCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
 
@@ -84,6 +105,31 @@ namespace TaskbarGrouper.Services
                 : targetPath;
 
             if (string.IsNullOrWhiteSpace(path)) return null;
+
+            // Directory/Folder: Use SHGetFileInfo for clean 32bpp alpha icon without black background
+            if (Directory.Exists(path))
+            {
+                try
+                {
+                    var shinfo = new SHFILEINFO();
+                    IntPtr hImg = SHGetFileInfo(path, 0, ref shinfo, (uint)Marshal.SizeOf(shinfo), SHGFI_ICON | SHGFI_LARGEICON);
+                    if (hImg != IntPtr.Zero && shinfo.hIcon != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            using (var ico = Icon.FromHandle(shinfo.hIcon))
+                            {
+                                return ico.ToBitmap();
+                            }
+                        }
+                        finally
+                        {
+                            DestroyIcon(shinfo.hIcon);
+                        }
+                    }
+                }
+                catch { }
+            }
 
             // 0. Direct Image formats (.png, .jpg, .jpeg, .bmp, .ico)
             string ext = Path.GetExtension(path);

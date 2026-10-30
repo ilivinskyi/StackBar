@@ -122,18 +122,24 @@ namespace TaskbarGrouper
             }));
         }
 
-        private void ShowManagerWindow()
+        private void ShowManagerWindow() => ShowManagerWindow(null);
+
+        private void ShowManagerWindow(string? selectGroupId)
         {
             Dispatcher.Invoke(new Action(() =>
             {
+                var config = _configService.LoadOrCreateDefault();
                 if (_mainWindow != null && _mainWindow.IsVisible)
                 {
+                    if (!string.IsNullOrEmpty(selectGroupId))
+                    {
+                        _mainWindow.SelectGroupById(selectGroupId);
+                    }
                     _mainWindow.Activate();
                     return;
                 }
 
-                var config = _configService.LoadOrCreateDefault();
-                _mainWindow = new MainWindow(config, _configService);
+                _mainWindow = new MainWindow(config, _configService, selectGroupId);
                 _mainWindow.Show();
             }));
         }

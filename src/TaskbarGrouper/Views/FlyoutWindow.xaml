@@ -60,7 +60,8 @@
             <StackPanel>
                 <!-- Header -->
                 <DockPanel Margin="2,0,2,8">
-                    <Button DockPanel.Dock="Right"
+                    <Button x:Name="EditStackButton"
+                            DockPanel.Dock="Right"
                             Click="EditStackButton_Click"
                             ToolTip="Open in StackBar Studio"
                             Background="Transparent"
@@ -81,6 +82,22 @@
                         </Button.Template>
                     </Button>
 
+                    <Button x:Name="DoneButton"
+                            DockPanel.Dock="Right"
+                            Click="DoneButton_Click"
+                            ToolTip="Finish rearranging"
+                            Cursor="Hand"
+                            Visibility="Collapsed"
+                            Margin="0,0,6,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#3A6DF0" CornerRadius="6" Padding="10,3">
+                                    <TextBlock Text="Done" Foreground="White" FontSize="11" FontWeight="Bold"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+
                     <Border DockPanel.Dock="Right"
                             CornerRadius="8"
                             Background="#1FFFFFFF"
@@ -89,30 +106,6 @@
                             VerticalAlignment="Center">
                         <TextBlock x:Name="ItemCountBadge" Text="0" Foreground="#AAFFFFFF" FontSize="10.5" FontWeight="SemiBold"/>
                     </Border>
-
-                    <Button x:Name="BackButton"
-                            DockPanel.Dock="Left"
-                            Click="BackButton_Click"
-                            ToolTip="Go back (Backspace)"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Cursor="Hand"
-                            Padding="6,2"
-                            Margin="0,0,8,0"
-                            Visibility="Collapsed">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border x:Name="Bb" CornerRadius="6" Padding="6,3" Background="#20FFFFFF">
-                                    <TextBlock Text="← Back" Foreground="#DDD" FontSize="11" FontWeight="SemiBold"/>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="Bb" Property="Background" Value="#40FFFFFF"/>
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Button.Template>
-                    </Button>
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Border x:Name="AccentDot" Width="8" Height="8" CornerRadius="4" Background="#3A6DF0" Margin="0,0,8,0" VerticalAlignment="Center"/>
@@ -142,6 +135,9 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Button Click="ItemButton_Click"
+                                    PreviewMouseLeftButtonDown="ItemButton_PreviewMouseLeftButtonDown"
+                                    PreviewMouseMove="ItemButton_PreviewMouseMove"
+                                    PreviewMouseLeftButtonUp="ItemButton_PreviewMouseLeftButtonUp"
                                     Tag="{Binding}"
                                     Width="82"
                                     Height="{Binding TileHeight}"
@@ -149,12 +145,16 @@
                                     Background="Transparent"
                                     BorderThickness="0"
                                     Cursor="Hand"
+                                    AllowDrop="True"
+                                    Drop="ItemButton_Drop"
                                     ToolTip="{Binding ToolTipText}">
                                 <Button.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Launch App" Click="ContextLaunch_Click" CommandParameter="{Binding}"/>
                                         <MenuItem Header="Run as Administrator" Click="ContextRunAdmin_Click" CommandParameter="{Binding}" Visibility="{Binding AdminOptionVisibility}"/>
                                         <MenuItem Header="Open File Location" Click="ContextOpenLocation_Click" CommandParameter="{Binding}" Visibility="{Binding FileLocationVisibility}"/>
+                                        <Separator/>
+                                        <MenuItem Header="Rearrange / Edit Apps (Hold Icon)" Click="ContextRearrange_Click"/>
                                     </ContextMenu>
                                 </Button.ContextMenu>
                                 <Button.Template>
@@ -164,7 +164,11 @@
                                                 Background="#08FFFFFF"
                                                 BorderBrush="#12FFFFFF"
                                                 BorderThickness="1"
-                                                Padding="6">
+                                                Padding="6"
+                                                RenderTransformOrigin="0.5,0.5">
+                                            <Border.RenderTransform>
+                                                <RotateTransform x:Name="JiggleRot" Angle="0"/>
+                                            </Border.RenderTransform>
                                             <Grid>
                                                 <TextBlock Text="{Binding HotkeyHint}"
                                                            HorizontalAlignment="Right"
@@ -185,6 +189,27 @@
                                                                TextTrimming="CharacterEllipsis"
                                                                MaxWidth="70"/>
                                                 </StackPanel>
+
+                                                <!-- Delete (✕) Badge in Jiggle Mode -->
+                                                <Button x:Name="DeleteBadge"
+                                                        Width="18"
+                                                        Height="18"
+                                                        HorizontalAlignment="Left"
+                                                        VerticalAlignment="Top"
+                                                        Margin="-2,-2,0,0"
+                                                        Visibility="{Binding DeleteBadgeVisibility}"
+                                                        Click="DeleteBadge_Click"
+                                                        Tag="{Binding}"
+                                                        Cursor="Hand"
+                                                        Focusable="False">
+                                                    <Button.Template>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <Border Width="18" Height="18" CornerRadius="9" Background="#E53935" BorderBrush="White" BorderThickness="1.2">
+                                                                <TextBlock Text="✕" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                                                            </Border>
+                                                        </ControlTemplate>
+                                                    </Button.Template>
+                                                </Button>
                                             </Grid>
                                         </Border>
                                         <ControlTemplate.Triggers>
@@ -195,6 +220,21 @@
                                             <Trigger Property="IsPressed" Value="True">
                                                 <Setter TargetName="ItemBorder" Property="Background" Value="#40FFFFFF"/>
                                             </Trigger>
+                                            <DataTrigger Binding="{Binding IsJiggling}" Value="True">
+                                                <DataTrigger.EnterActions>
+                                                    <BeginStoryboard x:Name="JiggleStoryboard">
+                                                        <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                                            <DoubleAnimation Storyboard.TargetName="JiggleRot"
+                                                                             Storyboard.TargetProperty="Angle"
+                                                                             From="-2.2" To="2.2"
+                                                                             Duration="0:0:0.12"/>
+                                                        </Storyboard>
+                                                    </BeginStoryboard>
+                                                </DataTrigger.EnterActions>
+                                                <DataTrigger.ExitActions>
+                                                    <StopStoryboard BeginStoryboardName="JiggleStoryboard"/>
+                                                </DataTrigger.ExitActions>
+                                            </DataTrigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
                                 </Button.Template>

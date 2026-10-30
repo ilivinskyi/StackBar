@@ -51,7 +51,7 @@ namespace TaskbarGrouper.Views
         private Point _dragStartPoint;
         private bool _isDraggingItem;
 
-        public MainWindow(AppConfig config, ConfigService configService)
+        public MainWindow(AppConfig config, ConfigService configService, string? selectGroupId = null)
         {
             InitializeComponent();
             _config = config;
@@ -65,8 +65,14 @@ namespace TaskbarGrouper.Views
             {
                 _debounceTimer.Stop();
                 _configService.Save(_config);
+                if (_selectedGroup != null)
+                {
+                    ShortcutService.UpdatePinnedTaskbarShortcutForGroup(_selectedGroup, _configService.AppDataDirectory);
+                }
                 RefreshLiveFolderIcon();
             };
+
+            InitializeEmojiPalette();
 
             _suppressEvents = true;
             RunAtStartupCheck.IsChecked = StartupService.IsRunAtStartupEnabled();
@@ -79,12 +85,32 @@ namespace TaskbarGrouper.Views
             _suppressEvents = false;
 
             RefreshGroupsList();
-            if (_config.Groups.Count > 0)
+            if (!string.IsNullOrEmpty(selectGroupId))
+            {
+                var target = _config.Groups.FirstOrDefault(g => g.Id.Equals(selectGroupId, StringComparison.OrdinalIgnoreCase));
+                if (target != null)
+                    GroupsListBox.SelectedItem = target;
+                else if (_config.Groups.Count > 0)
+                    GroupsListBox.SelectedIndex = 0;
+            }
+            else if (_config.Groups.Count > 0)
+            {
                 GroupsListBox.SelectedIndex = 0;
+            }
 
             // Enable custom internal drag-and-drop reordering on ItemsListBox
             ItemsListBox.PreviewMouseLeftButtonDown += ItemsListBox_PreviewMouseLeftButtonDown;
             ItemsListBox.PreviewMouseMove += ItemsListBox_PreviewMouseMove;
+        }
+
+        public void SelectGroupById(string? groupId)
+        {
+            if (string.IsNullOrEmpty(groupId)) return;
+            var target = _config.Groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (target != null)
+            {
+                GroupsListBox.SelectedItem = target;
+            }
         }
 
         private void ItemsListBox_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -162,13 +188,84 @@ namespace TaskbarGrouper.Views
             }
         }
 
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+        private const byte VK_LWIN = 0x5B;
+        private const byte VK_OEM_PERIOD = 0xBE;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
+
+        private static readonly string[] PaletteEmojis =
+        {
+            "📁", "📂", "🗂️", "💼", "📝", "📊", "📌", "📎",
+            "🎮", "🕹️", "🎲", "🎯", "👾", "🏆", "🏎️", "⚽",
+            "💻", "🖥️", "⚡", "🛠️", "⚙️", "💾", "⌨️", "🌐",
+            "💬", "💭", "✉️", "📞", "📢", "🔔", "👥", "💡",
+            "🎨", "🖌️", "🎬", "🎵", "🎧", "📷", "📹", "🪄",
+            "🤖", "🧠", "🧪", "🔭", "🚀", "🔮", "🛡️", "💎",
+            "⭐", "🌟", "✨", "🔥", "❤️", "🏷️", "☕", "🍕"
+        };
+
+        private void InitializeEmojiPalette()
+        {
+            EmojiPalettePanel.Children.Clear();
+            foreach (var emoji in PaletteEmojis)
+            {
+                var btn = new Button
+                {
+                    Content = emoji,
+                    Tag = emoji,
+                    Style = (Style)FindResource("SurfaceBtn"),
+                    Width = 30,
+                    Height = 30,
+                    Padding = new Thickness(0),
+                    Margin = new Thickness(2),
+                    FontSize = 14,
+                    Cursor = Cursors.Hand
+                };
+                btn.Click += (s, e) =>
+                {
+                    if (_selectedGroup != null)
+                    {
+                        _selectedGroup.IconGlyph = emoji;
+                        SelectedEmojiDisplay.Text = emoji;
+                        EmojiPickerPopup.IsOpen = false;
+                        _selectedGroup.IconMode = FolderIconMode.EmojiGlyph;
+                        StyleEmojiRadio.IsChecked = true;
+                        UpdateIconControlVisibility();
+                        TriggerDebounceSave();
+                        RefreshLiveFolderIcon();
+                    }
+                };
+                EmojiPalettePanel.Children.Add(btn);
+            }
+        }
+
+        private void EmojiPickerBtn_Click(object sender, RoutedEventArgs e)
+        {
+            EmojiPickerPopup.IsOpen = !EmojiPickerPopup.IsOpen;
+        }
+
+        private void OpenWindowsEmojiPanel_Click(object sender, RoutedEventArgs e)
+        {
+            EmojiPickerPopup.IsOpen = false;
+            try
+            {
+                keybd_event(VK_LWIN, 0, 0, UIntPtr.Zero);
+                keybd_event(VK_OEM_PERIOD, 0, 0, UIntPtr.Zero);
+                keybd_event(VK_OEM_PERIOD, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            }
+            catch { }
+        }
+
         private void RefreshItemsList()
         {
             if (_selectedGroup == null) return;
             _suppressEvents = true;
 
             GroupNameBox.Text = _selectedGroup.Name;
-            GroupGlyphBox.Text = _selectedGroup.IconGlyph;
+            SelectedEmojiDisplay.Text = string.IsNullOrWhiteSpace(_selectedGroup.IconGlyph) ? "📁" : _selectedGroup.IconGlyph;
 
             if (_selectedGroup.IconMode == FolderIconMode.CustomIco)
                 StyleCustomRadio.IsChecked = true;
@@ -219,7 +316,6 @@ namespace TaskbarGrouper.Views
         {
             if (_suppressEvents || _selectedGroup == null) return;
             _selectedGroup.Name = GroupNameBox.Text;
-            _selectedGroup.IconGlyph = GroupGlyphBox.Text;
             TriggerDebounceSave();
         }
 
@@ -311,7 +407,7 @@ namespace TaskbarGrouper.Views
         private void EmojiPreset_Click(object sender, RoutedEventArgs e)
         {
             if (_selectedGroup == null || !(sender is FrameworkElement fe) || !(fe.Tag is string glyph)) return;
-            GroupGlyphBox.Text = glyph;
+            SelectedEmojiDisplay.Text = glyph;
             _selectedGroup.IconGlyph = glyph;
             _selectedGroup.IconMode = FolderIconMode.EmojiGlyph;
             StyleEmojiRadio.IsChecked = true;
@@ -402,7 +498,7 @@ namespace TaskbarGrouper.Views
         {
             if (_selectedGroup == null) return;
             _configService.Save(_config);
-            var flyout = new FlyoutWindow(_selectedGroup, onEditRequested: () => Activate());
+            var flyout = new FlyoutWindow(_selectedGroup, onEditRequested: _ => Activate());
             flyout.Show();
         }
 

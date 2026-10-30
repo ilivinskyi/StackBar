@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Windows;
@@ -13,8 +14,11 @@ using StackBar.Common;
 
 namespace TaskbarGrouper.Views
 {
-    public class FlyoutItemViewModel
+    public class FlyoutItemViewModel : System.ComponentModel.INotifyPropertyChanged
     {
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged(string prop) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(prop));
+
         public string Name { get; set; } = string.Empty;
         public string ToolTipText { get; set; } = string.Empty;
         public string HotkeyHint { get; set; } = string.Empty;
@@ -24,6 +28,23 @@ namespace TaskbarGrouper.Views
         public Visibility FileLocationVisibility { get; set; } = Visibility.Visible;
         public TaskbarGrouper.Models.GroupItem Item { get; set; } = null!;
         public ImageSource? Icon { get; set; }
+
+        private bool _isJiggling;
+        public bool IsJiggling
+        {
+            get => _isJiggling;
+            set
+            {
+                if (_isJiggling != value)
+                {
+                    _isJiggling = value;
+                    OnPropertyChanged(nameof(IsJiggling));
+                    OnPropertyChanged(nameof(DeleteBadgeVisibility));
+                }
+            }
+        }
+
+        public Visibility DeleteBadgeVisibility => IsJiggling ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public partial class FlyoutWindow : Window
@@ -31,16 +52,17 @@ namespace TaskbarGrouper.Views
         private readonly AppGroup _group;
         private readonly int? _cursorX;
         private readonly int? _cursorY;
-        private readonly Action? _onEditRequested;
+        private readonly Action<string>? _onEditRequested;
         private readonly List<FlyoutItemViewModel> _viewModels = new List<FlyoutItemViewModel>();
-        private readonly Stack<List<TaskbarGrouper.Models.GroupItem>> _navHistory = new Stack<List<TaskbarGrouper.Models.GroupItem>>();
-        private readonly Stack<string> _titleHistory = new Stack<string>();
         private List<TaskbarGrouper.Models.GroupItem> _currentItems = new List<TaskbarGrouper.Models.GroupItem>();
         private bool _isClosing;
+        private bool _isJiggleMode;
+        private System.Windows.Threading.DispatcherTimer? _longPressTimer;
+        private Point _longPressStartPos;
 
         public int Columns => Polyfills.Clamp(_group.Columns, 2, 8);
 
-        public FlyoutWindow(AppGroup group, int? cursorX = null, int? cursorY = null, Action? onEditRequested = null)
+        public FlyoutWindow(AppGroup group, int? cursorX = null, int? cursorY = null, Action<string>? onEditRequested = null)
         {
             InitializeComponent();
             _group = group;
@@ -115,17 +137,22 @@ namespace TaskbarGrouper.Views
             bool isTaskbarTop;
             double caretOffsetDip = NativePositioningService.PositionNearTaskbarCursorWithCaret(this, _cursorX, _cursorY, out isTaskbarTop);
 
+            // Subtract Grid Margin (14 DIPs) and polygon half-width (8 DIPs) so arrow tip aligns exactly with cursor click
+            double caretCanvasX = caretOffsetDip - 14 - 8;
+            double cardWidth = RootBorder.ActualWidth > 0 ? RootBorder.ActualWidth : (ActualWidth - 28);
+            double clampedX = Polyfills.Clamp(caretCanvasX, 16, Math.Max(20, cardWidth - 32));
+
             if (isTaskbarTop)
             {
                 TopCaretCanvas.Visibility = Visibility.Visible;
                 BottomCaretCanvas.Visibility = Visibility.Collapsed;
-                Canvas.SetLeft(TopCaretPolygon, Polyfills.Clamp(caretOffsetDip - 8, 24, Math.Max(30, ActualWidth - 40)));
+                Canvas.SetLeft(TopCaretPolygon, clampedX);
             }
             else
             {
                 TopCaretCanvas.Visibility = Visibility.Collapsed;
                 BottomCaretCanvas.Visibility = Visibility.Visible;
-                Canvas.SetLeft(BottomCaretPolygon, Polyfills.Clamp(caretOffsetDip - 8, 24, Math.Max(30, ActualWidth - 40)));
+                Canvas.SetLeft(BottomCaretPolygon, clampedX);
             }
 
             Activate();
@@ -158,29 +185,24 @@ namespace TaskbarGrouper.Views
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
             _isClosing = true;
+            _longPressTimer?.Stop();
         }
 
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Back)
-            {
-                if (NavigateBack())
-                {
-                    e.Handled = true;
-                    return;
-                }
-            }
-
             if (e.Key == Key.Escape)
             {
-                if (NavigateBack())
+                if (_isJiggleMode)
                 {
+                    ExitJiggleMode();
                     e.Handled = true;
                     return;
                 }
                 Close();
                 return;
             }
+
+            if (_isJiggleMode) return;
 
             int index = -1;
             if (e.Key >= Key.D1 && e.Key <= Key.D9)
@@ -198,11 +220,147 @@ namespace TaskbarGrouper.Views
         private void EditStackButton_Click(object sender, RoutedEventArgs e)
         {
             Close();
-            _onEditRequested?.Invoke();
+            _onEditRequested?.Invoke(_group.Id);
+        }
+
+        private void EnterJiggleMode()
+        {
+            _isJiggleMode = true;
+            DoneButton.Visibility = Visibility.Visible;
+            EditStackButton.Visibility = Visibility.Collapsed;
+            foreach (var vm in _viewModels)
+            {
+                vm.IsJiggling = true;
+            }
+        }
+
+        private void ExitJiggleMode()
+        {
+            _isJiggleMode = false;
+            DoneButton.Visibility = Visibility.Collapsed;
+            EditStackButton.Visibility = Visibility.Visible;
+            foreach (var vm in _viewModels)
+            {
+                vm.IsJiggling = false;
+            }
+        }
+
+        private void DoneButton_Click(object sender, RoutedEventArgs e)
+        {
+            ExitJiggleMode();
+        }
+
+        private void ContextRearrange_Click(object sender, RoutedEventArgs e)
+        {
+            EnterJiggleMode();
+        }
+
+        private void ItemButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _longPressStartPos = e.GetPosition(this);
+            if (_isJiggleMode)
+            {
+                if (sender is FrameworkElement fe && fe.DataContext is FlyoutItemViewModel vm)
+                {
+                    var data = new DataObject("StackBar.FlyoutReorder", vm);
+                    DragDrop.DoDragDrop(fe, data, DragDropEffects.Move);
+                }
+                e.Handled = true;
+                return;
+            }
+
+            _longPressTimer?.Stop();
+            _longPressTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+            _longPressTimer.Tick += (s, ev) =>
+            {
+                _longPressTimer?.Stop();
+                EnterJiggleMode();
+            };
+            _longPressTimer.Start();
+        }
+
+        private void ItemButton_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed && _longPressTimer != null && _longPressTimer.IsEnabled)
+            {
+                Point cur = e.GetPosition(this);
+                if (Math.Abs(cur.X - _longPressStartPos.X) > 6 || Math.Abs(cur.Y - _longPressStartPos.Y) > 6)
+                {
+                    _longPressTimer.Stop();
+                }
+            }
+        }
+
+        private void ItemButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            _longPressTimer?.Stop();
+        }
+
+        private void DeleteBadge_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is FlyoutItemViewModel vm)
+            {
+                var res = MessageBox.Show($"Remove '{vm.Name}' from this stack?", "Remove from Stack", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (res == MessageBoxResult.Yes)
+                {
+                    _group.Items.Remove(vm.Item);
+                    var cs = new ConfigService();
+                    var cfg = cs.LoadOrCreateDefault();
+                    var matched = cfg.Groups.FirstOrDefault(g => g.Id == _group.Id);
+                    if (matched != null)
+                    {
+                        matched.Items = _group.Items;
+                        cs.Save(cfg);
+                    }
+                    ShortcutService.UpdatePinnedTaskbarShortcutForGroup(_group, cs.AppDataDirectory);
+                    PopulateViewModels(_group.Items);
+                    ItemCountBadge.Text = $"{_group.Items.Count}";
+                    if (_group.Items.Count == 0)
+                        ExitJiggleMode();
+                    else
+                    {
+                        foreach (var m in _viewModels) m.IsJiggling = true;
+                    }
+                }
+            }
+        }
+
+        private void ItemButton_Drop(object sender, DragEventArgs e)
+        {
+            if (!_isJiggleMode) return;
+            if (e.Data.GetDataPresent("StackBar.FlyoutReorder"))
+            {
+                var sourceVm = e.Data.GetData("StackBar.FlyoutReorder") as FlyoutItemViewModel;
+                if (sourceVm != null && sender is FrameworkElement targetFe && targetFe.DataContext is FlyoutItemViewModel targetVm)
+                {
+                    if (sourceVm != targetVm)
+                    {
+                        int oldIdx = _group.Items.IndexOf(sourceVm.Item);
+                        int newIdx = _group.Items.IndexOf(targetVm.Item);
+                        if (oldIdx >= 0 && newIdx >= 0)
+                        {
+                            _group.Items.RemoveAt(oldIdx);
+                            _group.Items.Insert(newIdx, sourceVm.Item);
+                            var cs = new ConfigService();
+                            var cfg = cs.LoadOrCreateDefault();
+                            var matched = cfg.Groups.FirstOrDefault(g => g.Id == _group.Id);
+                            if (matched != null)
+                            {
+                                matched.Items = _group.Items;
+                                cs.Save(cfg);
+                            }
+                            ShortcutService.UpdatePinnedTaskbarShortcutForGroup(_group, cs.AppDataDirectory);
+                            PopulateViewModels(_group.Items);
+                            foreach (var m in _viewModels) m.IsJiggling = true;
+                        }
+                    }
+                }
+            }
         }
 
         private void ItemButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_isJiggleMode) return;
             if (sender is FrameworkElement fe && fe.Tag is FlyoutItemViewModel vm)
             {
                 bool asAdmin = (Keyboard.Modifiers & ModifierKeys.Control) != 0 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
@@ -253,11 +411,17 @@ namespace TaskbarGrouper.Views
         {
             try
             {
-                // Custom Folder drill-down feature!
+                // Custom Folder: Open in Windows Explorer directly!
                 if (vm.Item.Kind == ItemKind.Folder || Directory.Exists(vm.Item.TargetPath))
                 {
-                    // Drill in: Show contents of this directory right inside the flyout
-                    DisplaySubdirectoryContents(vm.Item.TargetPath);
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        Arguments = $"\"{vm.Item.TargetPath}\"",
+                        UseShellExecute = true
+                    });
+                    if (_group.CloseOnLaunch)
+                        Close();
                     return;
                 }
 
@@ -299,71 +463,6 @@ namespace TaskbarGrouper.Views
 
             if (_group.CloseOnLaunch)
                 Close();
-        }
-
-        private void BackButton_Click(object sender, RoutedEventArgs e)
-        {
-            NavigateBack();
-        }
-
-        private bool NavigateBack()
-        {
-            if (_navHistory.Count > 0)
-            {
-                var prevItems = _navHistory.Pop();
-                string prevTitle = _titleHistory.Pop();
-                GroupTitleText.Text = prevTitle;
-                ItemCountBadge.Text = $"{prevItems.Count}";
-                PopulateViewModels(prevItems);
-                if (_navHistory.Count == 0)
-                    BackButton.Visibility = Visibility.Collapsed;
-                return true;
-            }
-            return false;
-        }
-
-        private void DisplaySubdirectoryContents(string folderPath)
-        {
-            try
-            {
-                _navHistory.Push(new List<TaskbarGrouper.Models.GroupItem>(_currentItems));
-                _titleHistory.Push(GroupTitleText.Text);
-                BackButton.Visibility = Visibility.Visible;
-
-                GroupTitleText.Text = $"📁  {Path.GetFileName(folderPath.TrimEnd('\\'))}";
-                var subItems = new List<TaskbarGrouper.Models.GroupItem>();
-
-                // Add subdirectories
-                foreach (var d in Directory.GetDirectories(folderPath))
-                {
-                    var di = new DirectoryInfo(d);
-                    if ((di.Attributes & FileAttributes.Hidden) != 0) continue;
-                    subItems.Add(new TaskbarGrouper.Models.GroupItem
-                    {
-                        Name = di.Name,
-                        TargetPath = d,
-                        WorkingDirectory = d,
-                        Kind = ItemKind.Folder
-                    });
-                }
-
-                // Add files
-                foreach (var f in Directory.GetFiles(folderPath))
-                {
-                    var fi = new FileInfo(f);
-                    if ((fi.Attributes & FileAttributes.Hidden) != 0) continue;
-                    subItems.Add(ShortcutService.ParseShortcut(f));
-                }
-
-                ItemCountBadge.Text = $"{subItems.Count}";
-                PopulateViewModels(subItems);
-            }
-            catch
-            {
-                // Fallback to opening folder in Windows Explorer
-                Process.Start("explorer.exe", $"\"{folderPath}\"");
-                Close();
-            }
         }
     }
 }

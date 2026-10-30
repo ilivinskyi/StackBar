@@ -133,6 +133,64 @@ namespace TaskbarGrouper.Services
             return lnkPath;
         }
 
+        [DllImport("shell32.dll")]
+        private static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+
+        private const uint SHCNE_ASSOCCHANGED = 0x08000000;
+        private const uint SHCNF_FLUSH = 0x1000;
+
+        public static void UpdatePinnedTaskbarShortcutForGroup(AppGroup group, string appDataDir)
+        {
+            try
+            {
+                string pinnedDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
+
+                if (!Directory.Exists(pinnedDir)) return;
+
+                string iconsDir = Path.Combine(appDataDir, "Icons");
+                string icoPath = IconHelper.GenerateGroupIcoFile(group, iconsDir);
+
+                bool updated = false;
+                foreach (var file in Directory.GetFiles(pinnedDir, "*.lnk"))
+                {
+                    try
+                    {
+                        var link = (IShellLinkW)new ShellLink();
+                        try
+                        {
+                            ((IPersistFile)link).Load(file, 0);
+                            var argsSb = new StringBuilder(1024);
+                            link.GetArguments(argsSb, argsSb.Capacity);
+                            string args = argsSb.ToString();
+
+                            if (args.IndexOf("--group", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                                args.IndexOf(group.Id, StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                link.SetPath(AppInfo.ExePath);
+                                link.SetIconLocation(icoPath, 0);
+                                ((IPersistFile)link).Save(file, false);
+                                try { File.SetLastWriteTimeUtc(file, DateTime.UtcNow); } catch { }
+                                updated = true;
+                            }
+                        }
+                        finally
+                        {
+                            Marshal.FinalReleaseComObject(link);
+                        }
+                    }
+                    catch { }
+                }
+
+                if (updated)
+                {
+                    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, IntPtr.Zero, IntPtr.Zero);
+                }
+            }
+            catch { }
+        }
+
         public static void HealPinnedTaskbarShortcuts(AppConfig config, string appDataDir)
         {
             try
@@ -166,6 +224,7 @@ namespace TaskbarGrouper.Services
                                         link.SetPath(AppInfo.ExePath);
                                         link.SetIconLocation(icoPath, 0);
                                         ((IPersistFile)link).Save(file, false);
+                                        try { File.SetLastWriteTimeUtc(file, DateTime.UtcNow); } catch { }
                                         break;
                                     }
                                 }
@@ -178,6 +237,8 @@ namespace TaskbarGrouper.Services
                     }
                     catch { }
                 }
+
+                SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, IntPtr.Zero, IntPtr.Zero);
             }
             catch { }
         }

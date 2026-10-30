@@ -243,7 +243,27 @@
 
                             <StackPanel Orientation="Horizontal" Margin="0,4,16,4" VerticalAlignment="Center">
                                 <TextBlock Text="Emoji:" Foreground="#AAFFFFFF" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox x:Name="GroupGlyphBox" Width="42" TextAlignment="Center" Style="{StaticResource DarkTextBox}" TextChanged="GroupMeta_Changed"/>
+                                <Button x:Name="EmojiPickerBtn" Click="EmojiPickerBtn_Click" Style="{StaticResource SurfaceBtn}" Padding="8,4" Cursor="Hand" ToolTip="Click to select folder emoji">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock x:Name="SelectedEmojiDisplay" Text="📁" FontSize="15" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                        <TextBlock Text="▾" FontSize="9" Foreground="#88FFFFFF" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Popup x:Name="EmojiPickerPopup" StaysOpen="False" AllowsTransparency="True" PlacementTarget="{Binding ElementName=EmojiPickerBtn}" Placement="Bottom">
+                                    <Border Background="#1C1E2A" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="10" Padding="10" Margin="4">
+                                        <Border.Effect>
+                                            <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.5" Color="Black"/>
+                                        </Border.Effect>
+                                        <StackPanel Width="270">
+                                            <TextBlock Text="Select Folder Emoji" Foreground="#AAFFFFFF" FontSize="11" FontWeight="SemiBold" Margin="2,0,0,6"/>
+                                            <WrapPanel x:Name="EmojiPalettePanel">
+                                                <!-- Populated in code-behind with categorized emojis -->
+                                            </WrapPanel>
+                                            <Border Height="1" Background="#20FFFFFF" Margin="0,8,0,6"/>
+                                            <Button Content="Windows Emoji Panel (Win + .)" Click="OpenWindowsEmojiPanel_Click" Style="{StaticResource SurfaceBtn}" FontSize="11" Padding="4,4"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Popup>
                             </StackPanel>
 
                             <!-- Theme swatches -->

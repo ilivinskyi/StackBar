@@ -28,6 +28,7 @@ namespace TaskbarGrouper.Services
 
         public static double PositionNearTaskbarCursorWithCaret(Window window, int? overrideCursorX, int? overrideCursorY, out bool isTaskbarTop)
         {
+            window.UpdateLayout();
             isTaskbarTop = false;
             POINT cursor;
             GetCursorPos(out cursor);
