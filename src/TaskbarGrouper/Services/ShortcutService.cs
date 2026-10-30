@@ -1,353 +1,419 @@
-using System.Diagnostics;
+using System;
 using System.IO;
+using System.Text;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
-using System.Text;
 using TaskbarGrouper.Models;
 
-namespace TaskbarGrouper.Services;
-
-public class DiscoveredAppItem
+namespace TaskbarGrouper.Services
 {
-    public GroupItem Item { get; init; } = null!;
-    public string SourceBadge { get; init; } = "Pinned";
-}
-
-public static class ShortcutService
-{
-    [ComImport]
-    [Guid("00021401-0000-0000-C000-000000000046")]
-    private class ShellLink
+    public class DiscoveredAppItem
     {
+        public GroupItem Item { get; set; } = null!;
+        public string SourceBadge { get; set; } = "Pinned";
     }
 
-    [ComImport]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    [Guid("000214F9-0000-0000-C000-000000000046")]
-    private interface IShellLinkW
+    public static class ShortcutService
     {
-        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, out IntPtr pfd, int fFlags);
-        void GetIDList(out IntPtr ppidl);
-        void SetIDList(IntPtr pidl);
-        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cchMaxName);
-        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
-        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir, int cchMaxPath);
-        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
-        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs, int cchMaxPath);
-        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
-        void GetHotkey(out short pwHotkey);
-        void SetHotkey(short wHotkey);
-        void GetShowCmd(out int piShowCmd);
-        void SetShowCmd(int iShowCmd);
-        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath, int cchIconPath, out int piIcon);
-        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
-        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, int dwReserved);
-        void Resolve(IntPtr hwnd, int fFlags);
-        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
-    }
+        [ComImport]
+        [Guid("00021401-0000-0000-C000-000000000046")]
+        private class ShellLink { }
 
-    [ComImport]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
-    private interface IPropertyStore
-    {
-        uint GetCount(out uint cProps);
-        uint GetAt(uint iProp, out PROPERTYKEY pkey);
-        uint GetValue(ref PROPERTYKEY key, out PROPVARIANT pv);
-        uint SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
-        uint Commit();
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 4)]
-    private struct PROPERTYKEY
-    {
-        public Guid fmtid;
-        public uint pid;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct PROPVARIANT
-    {
-        public ushort vt;
-        public ushort wReserved1;
-        public ushort wReserved2;
-        public ushort wReserved3;
-        public IntPtr pwszVal;
-        public IntPtr ptr2;
-    }
-
-    private static readonly PROPERTYKEY AppUserModelIdKey = new()
-    {
-        fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
-        pid = 5
-    };
-
-    /// <summary>
-    /// Creates a Windows .lnk shortcut for a StackBar group with its own custom .ico and unique AppUserModelID
-    /// so multiple StackBar folders can be pinned side-by-side on the Windows 11 Taskbar.
-    /// </summary>
-    public static string CreateGroupShortcut(AppGroup group, string appDataDir)
-    {
-        string iconsDir = Path.Combine(appDataDir, "Icons");
-        string shortcutsDir = Path.Combine(appDataDir, "Shortcuts");
-        Directory.CreateDirectory(iconsDir);
-        Directory.CreateDirectory(shortcutsDir);
-
-        string icoPath = IconHelper.GenerateGroupIcoFile(group, iconsDir);
-        string safeName = string.Join("_", group.Name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries)).Trim();
-        if (string.IsNullOrEmpty(safeName)) safeName = group.Id;
-
-        string lnkPath = Path.Combine(shortcutsDir, $"{safeName} (StackBar).lnk");
-        string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "StackBar.exe";
-
-        var link = (IShellLinkW)new ShellLink();
-        link.SetPath(exePath);
-        link.SetArguments($"--group \"{group.Id}\"");
-        link.SetWorkingDirectory(Path.GetDirectoryName(exePath) ?? Environment.CurrentDirectory);
-        link.SetDescription($"Open {group.Name} StackBar Folder");
-        link.SetIconLocation(icoPath, 0);
-
-        // Assign distinct AppUserModelID so Windows 11 treats each group shortcut as a separately pinnable taskbar item
-        if (link is IPropertyStore propStore)
+        [ComImport]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        [Guid("000214F9-0000-0000-C000-000000000046")]
+        private interface IShellLinkW
         {
-            var key = AppUserModelIdKey;
-            var pv = new PROPVARIANT
-            {
-                vt = 31, // VT_LPWSTR
-                pwszVal = Marshal.StringToCoTaskMemUni($"StackBar.Group.{group.Id}")
-            };
+            [PreserveSig]
+            int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, IntPtr pfd, uint fFlags);
+            [PreserveSig] int GetIDList(out IntPtr ppidl);
+            [PreserveSig] int SetIDList(IntPtr pidl);
+            [PreserveSig] int GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cchMaxName);
+            [PreserveSig] int SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+            [PreserveSig] int GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir, int cchMaxPath);
+            [PreserveSig] int SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+            [PreserveSig] int GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs, int cchMaxPath);
+            [PreserveSig] int SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+            [PreserveSig] int GetHotkey(out short pwHotkey);
+            [PreserveSig] int SetHotkey(short wHotkey);
+            [PreserveSig] int GetShowCmd(out int piShowCmd);
+            [PreserveSig] int SetShowCmd(int iShowCmd);
+            [PreserveSig] int GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath, int cchIconPath, out int piIcon);
+            [PreserveSig] int SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+            [PreserveSig] int SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, uint dwReserved);
+            [PreserveSig] int Resolve(IntPtr hwnd, uint fFlags);
+            [PreserveSig] int SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
+        }
+
+        [ComImport]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+        private interface IPropertyStore
+        {
+            [PreserveSig] int GetCount(out uint cProps);
+            [PreserveSig] int GetAt(uint iProp, out PROPERTYKEY pkey);
+            [PreserveSig] int GetValue(ref PROPERTYKEY key, out PROPVARIANT pv);
+            [PreserveSig] int SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
+            [PreserveSig] int Commit();
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        private struct PROPERTYKEY
+        {
+            public Guid fmtid;
+            public uint pid;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROPVARIANT
+        {
+            public ushort vt;
+            public ushort wReserved1;
+            public ushort wReserved2;
+            public ushort wReserved3;
+            public IntPtr pwszVal;
+            public IntPtr ptr2;
+        }
+
+        private static readonly PROPERTYKEY AppUserModelIdKey = new PROPERTYKEY
+        {
+            fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
+            pid = 5
+        };
+
+        public static string CreateGroupShortcut(AppGroup group, string appDataDir)
+        {
+            string iconsDir = Path.Combine(appDataDir, "Icons");
+            string shortcutsDir = Path.Combine(appDataDir, "Shortcuts");
+            Directory.CreateDirectory(iconsDir);
+            Directory.CreateDirectory(shortcutsDir);
+
+            string icoPath = IconHelper.GenerateGroupIcoFile(group, iconsDir);
+            string safeName = string.Join("_", group.Name.Split(Path.GetInvalidFileNameChars())).Trim();
+            if (string.IsNullOrEmpty(safeName)) safeName = group.Id;
+
+            string lnkPath = Path.Combine(shortcutsDir, $"{safeName} (StackBar).lnk");
+            string exePath = AppInfo.ExePath;
+
+            var link = (IShellLinkW)new ShellLink();
             try
             {
-                propStore.SetValue(ref key, ref pv);
-                propStore.Commit();
+                link.SetPath(exePath);
+                link.SetArguments($"--group \"{group.Id}\"");
+                link.SetWorkingDirectory(Path.GetDirectoryName(exePath) ?? Environment.CurrentDirectory);
+                link.SetDescription($"Open {group.Name} StackBar Folder");
+                link.SetIconLocation(icoPath, 0);
+
+                if (link is IPropertyStore propStore)
+                {
+                    var key = AppUserModelIdKey;
+                    var pv = new PROPVARIANT
+                    {
+                        vt = 31, // VT_LPWSTR
+                        pwszVal = Marshal.StringToCoTaskMemUni($"StackBar.Group.{group.Id}")
+                    };
+                    try
+                    {
+                        propStore.SetValue(ref key, ref pv);
+                        propStore.Commit();
+                    }
+                    finally
+                    {
+                        Marshal.FreeCoTaskMem(pv.pwszVal);
+                    }
+                }
+
+                ((IPersistFile)link).Save(lnkPath, false);
             }
             finally
             {
-                Marshal.FreeCoTaskMem(pv.pwszVal);
+                Marshal.FinalReleaseComObject(link);
             }
+
+            return lnkPath;
         }
 
-        ((IPersistFile)link).Save(lnkPath, false);
-        return lnkPath;
-    }
-
-    /// <summary>
-    /// Scans all 3 taskbar/app sources:
-    /// 1) Pinned Taskbar shortcuts (%AppData%\...\User Pinned\TaskBar)
-    /// 2) Currently open/running Taskbar windows (e.g. Steam, Epic, Discord, browsers)
-    /// 3) Desktop & Start Menu shortcuts (including Steam .url game shortcuts and Minecraft/Store apps)
-    /// </summary>
-    public static List<DiscoveredAppItem> ScanAllTaskbarAndSystemApps()
-    {
-        var results = new List<DiscoveredAppItem>();
-        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        void AddIfUnique(GroupItem? item, string badge)
+        public static void HealPinnedTaskbarShortcuts(AppConfig config, string appDataDir)
         {
-            if (item == null || string.IsNullOrWhiteSpace(item.Name) || string.IsNullOrWhiteSpace(item.TargetPath))
-                return;
-            if (item.Name.Contains("StackBar", StringComparison.OrdinalIgnoreCase) ||
-                item.TargetPath.Contains("StackBar", StringComparison.OrdinalIgnoreCase) ||
-                item.Name.Contains("Uninstall", StringComparison.OrdinalIgnoreCase))
-                return;
-
-            string key = $"{item.Name.Trim()}|{Path.GetFileName(item.TargetPath)}";
-            if (seenKeys.Add(key))
+            try
             {
-                results.Add(new DiscoveredAppItem { Item = item, SourceBadge = badge });
-            }
-        }
+                string pinnedDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
 
-        // 1. Pinned Taskbar Folder (.lnk and .url)
-        try
-        {
-            string pinnedDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
+                if (!Directory.Exists(pinnedDir)) return;
 
-            if (Directory.Exists(pinnedDir))
-            {
-                foreach (var file in Directory.EnumerateFiles(pinnedDir))
+                foreach (var file in Directory.GetFiles(pinnedDir, "*.lnk"))
                 {
-                    if (file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ||
-                        file.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
-                    {
-                        AddIfUnique(ParseShortcut(file), "📌 Pinned on Taskbar");
-                    }
-                }
-            }
-        }
-        catch { }
-
-        // 2. Currently Running Taskbar Applications (captures Steam, Minecraft, Discord, IDEs, etc. even if unpinned or UWP)
-        try
-        {
-            foreach (var proc in Process.GetProcesses())
-            {
-                try
-                {
-                    if (proc.MainWindowHandle == IntPtr.Zero || string.IsNullOrWhiteSpace(proc.MainWindowTitle))
-                        continue;
-
-                    string? exePath = null;
                     try
                     {
-                        exePath = proc.MainModule?.FileName;
+                        var link = (IShellLinkW)new ShellLink();
+                        try
+                        {
+                            ((IPersistFile)link).Load(file, 0);
+                            var argsSb = new StringBuilder(1024);
+                            link.GetArguments(argsSb, argsSb.Capacity);
+                            string args = argsSb.ToString();
+
+                            if (args.IndexOf("--group", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                // Find matching group
+                                foreach (var group in config.Groups)
+                                {
+                                    if (args.IndexOf(group.Id, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    {
+                                        string iconsDir = Path.Combine(appDataDir, "Icons");
+                                        string icoPath = IconHelper.GenerateGroupIcoFile(group, iconsDir);
+                                        link.SetPath(AppInfo.ExePath);
+                                        link.SetIconLocation(icoPath, 0);
+                                        ((IPersistFile)link).Save(file, false);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            Marshal.FinalReleaseComObject(link);
+                        }
                     }
-                    catch
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        public static GroupItem ImportAndPersistShortcut(string sourceFile, string appDataDir)
+        {
+            string linksDir = Path.Combine(appDataDir, "Links");
+            Directory.CreateDirectory(linksDir);
+
+            string name = Path.GetFileNameWithoutExtension(sourceFile);
+            string ext = Path.GetExtension(sourceFile);
+
+            // If it's a file (.exe, etc) not a shortcut, keep target path directly
+            if (!ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase) &&
+                !ext.Equals(".url", StringComparison.OrdinalIgnoreCase))
+            {
+                return new GroupItem
+                {
+                    Name = name,
+                    TargetPath = sourceFile,
+                    WorkingDirectory = Path.GetDirectoryName(sourceFile) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    Kind = ItemKind.File
+                };
+            }
+
+            // Copy shortcut to persistent Links folder so unpinning won't destroy it!
+            string safeId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            string safeName = string.Join("_", name.Split(Path.GetInvalidFileNameChars())).Trim();
+            string persistentLnkPath = Path.Combine(linksDir, $"{safeId}_{safeName}{ext}");
+
+            try
+            {
+                File.Copy(sourceFile, persistentLnkPath, true);
+            }
+            catch
+            {
+                persistentLnkPath = sourceFile;
+            }
+
+            return ParseShortcut(persistentLnkPath);
+        }
+
+        public static GroupItem ParseShortcut(string lnkOrFilePath)
+        {
+            string name = Path.GetFileNameWithoutExtension(lnkOrFilePath);
+
+            if (lnkOrFilePath.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase))
+            {
+                return new GroupItem
+                {
+                    Name = name,
+                    TargetPath = lnkOrFilePath,
+                    Kind = ItemKind.ShellApp
+                };
+            }
+
+            if (lnkOrFilePath.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
+            {
+                string? urlIcon = null;
+                try
+                {
+                    foreach (var line in File.ReadAllLines(lnkOrFilePath))
                     {
-                        continue;
+                        if (line.StartsWith("IconFile=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string candidate = Environment.ExpandEnvironmentVariables(line.Substring("IconFile=".Length).Trim());
+                            if (File.Exists(candidate))
+                                urlIcon = candidate;
+                            break;
+                        }
                     }
-
-                    if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
-                        continue;
-
-                    string exeFile = Path.GetFileName(exePath);
-                    if (exeFile.Equals("explorer.exe", StringComparison.OrdinalIgnoreCase) ||
-                        exeFile.Equals("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase) ||
-                        exeFile.Equals("TextInputHost.exe", StringComparison.OrdinalIgnoreCase) ||
-                        exeFile.Equals("SearchHost.exe", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    string friendlyName = proc.MainModule?.FileVersionInfo.FileDescription ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(friendlyName))
-                        friendlyName = Path.GetFileNameWithoutExtension(exePath);
-
-                    AddIfUnique(new GroupItem
-                    {
-                        Name = friendlyName.Trim(),
-                        TargetPath = exePath,
-                        WorkingDirectory = Path.GetDirectoryName(exePath) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-                    }, "🟢 Running on Taskbar");
                 }
                 catch { }
-            }
-        }
-        catch { }
 
-        // 3. User & Public Desktop + Start Menu Programs (captures Steam .url games, Minecraft Launcher, Epic, etc.)
-        string[] extraDirs =
-        {
-            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
-            Environment.GetFolderPath(Environment.SpecialFolder.Programs),
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms)
-        };
-
-        foreach (var dir in extraDirs.Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d)))
-        {
-            try
-            {
-                string badge = dir.Contains("Desktop", StringComparison.OrdinalIgnoreCase) ? "🖥 Desktop" : "⊞ Start Menu";
-                foreach (var file in Directory.EnumerateFiles(dir, "*.*", SearchOption.AllDirectories))
+                return new GroupItem
                 {
-                    if (file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ||
-                        file.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
-                    {
-                        AddIfUnique(ParseShortcut(file), badge);
-                    }
-                }
+                    Name = name,
+                    TargetPath = lnkOrFilePath,
+                    WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    CustomIconPath = urlIcon ?? lnkOrFilePath,
+                    Kind = ItemKind.Shortcut
+                };
             }
-            catch { }
-        }
 
-        return results;
-    }
-
-    public static GroupItem? ParseShortcut(string lnkOrFilePath)
-    {
-        if (!File.Exists(lnkOrFilePath))
-            return null;
-
-        string name = Path.GetFileNameWithoutExtension(lnkOrFilePath);
-
-        if (lnkOrFilePath.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
-        {
-            // Parse Internet Shortcut (.url) used by Steam / Epic Games for custom icons
-            string? urlIcon = null;
-            try
+            if (lnkOrFilePath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
             {
-                foreach (var line in File.ReadAllLines(lnkOrFilePath))
+                string workDir = string.Empty;
+                string customIcon = lnkOrFilePath;
+                try
                 {
-                    if (line.StartsWith("IconFile=", StringComparison.OrdinalIgnoreCase))
+                    var link = (IShellLinkW)new ShellLink();
+                    try
                     {
-                        string candidate = Environment.ExpandEnvironmentVariables(line["IconFile=".Length..].Trim());
-                        if (File.Exists(candidate))
-                            urlIcon = candidate;
-                        break;
-                    }
-                }
-            }
-            catch { }
+                        ((IPersistFile)link).Load(lnkOrFilePath, 0);
+                        var workDirSb = new StringBuilder(260);
+                        link.GetWorkingDirectory(workDirSb, workDirSb.Capacity);
+                        workDir = workDirSb.ToString();
 
-            return new GroupItem
-            {
-                Name = name,
-                TargetPath = lnkOrFilePath,
-                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                CustomIconPath = urlIcon ?? lnkOrFilePath
-            };
-        }
-
-        if (!lnkOrFilePath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
-        {
-            string? dir = Path.GetDirectoryName(lnkOrFilePath);
-            return new GroupItem
-            {
-                Name = name,
-                TargetPath = lnkOrFilePath,
-                WorkingDirectory = !string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir)
-                    ? dir
-                    : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-            };
-        }
-
-        // For .lnk files, we store the .lnk path itself as TargetPath so Windows Shell launches UWP apps,
-        // Steam links, and custom shortcut properties natively, while we read WorkingDirectory via WScript.Shell safely.
-        string workingDir = string.Empty;
-        string customIcon = lnkOrFilePath;
-
-        try
-        {
-            Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
-            if (shellType != null)
-            {
-                dynamic? shell = Activator.CreateInstance(shellType);
-                if (shell != null)
-                {
-                    dynamic shortcut = shell.CreateShortcut(lnkOrFilePath);
-                    string? wd = shortcut.WorkingDirectory as string;
-                    if (!string.IsNullOrWhiteSpace(wd))
-                    {
-                        workingDir = Environment.ExpandEnvironmentVariables(wd);
-                    }
-
-                    string? iconLoc = shortcut.IconLocation as string;
-                    if (!string.IsNullOrWhiteSpace(iconLoc))
-                    {
-                        string rawIcon = Environment.ExpandEnvironmentVariables(iconLoc.Split(',')[0].Trim());
+                        var iconSb = new StringBuilder(260);
+                        link.GetIconLocation(iconSb, iconSb.Capacity, out _);
+                        string rawIcon = Environment.ExpandEnvironmentVariables(iconSb.ToString());
                         if (File.Exists(rawIcon))
                             customIcon = rawIcon;
                     }
+                    finally
+                    {
+                        Marshal.FinalReleaseComObject(link);
+                    }
+                }
+                catch { }
+
+                return new GroupItem
+                {
+                    Name = name,
+                    TargetPath = lnkOrFilePath,
+                    WorkingDirectory = Directory.Exists(workDir) ? workDir : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    CustomIconPath = customIcon,
+                    Kind = ItemKind.Shortcut
+                };
+            }
+
+            return new GroupItem
+            {
+                Name = name,
+                TargetPath = lnkOrFilePath,
+                WorkingDirectory = Path.GetDirectoryName(lnkOrFilePath) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                Kind = ItemKind.File
+            };
+        }
+
+        public static List<DiscoveredAppItem> ScanAllTaskbarAndSystemApps()
+        {
+            var results = new List<DiscoveredAppItem>();
+            var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddIfUnique(GroupItem? item, string badge)
+            {
+                if (item == null || string.IsNullOrWhiteSpace(item.Name) || string.IsNullOrWhiteSpace(item.TargetPath))
+                    return;
+                if (item.Name.IndexOf("StackBar", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    item.TargetPath.IndexOf("StackBar", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    item.Name.IndexOf("Uninstall", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return;
+
+                string key = $"{item.Name.Trim()}|{Path.GetFileName(item.TargetPath)}";
+                if (seenKeys.Add(key))
+                {
+                    results.Add(new DiscoveredAppItem { Item = item, SourceBadge = badge });
                 }
             }
-        }
-        catch
-        {
-            // Fallback safely to the .lnk file itself
-        }
 
-        if (string.IsNullOrWhiteSpace(workingDir) || !Directory.Exists(workingDir))
-        {
-            workingDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        }
+            // 1. Pinned Taskbar Folder (.lnk and .url)
+            try
+            {
+                string pinnedDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
 
-        return new GroupItem
-        {
-            Name = name,
-            TargetPath = lnkOrFilePath,
-            WorkingDirectory = workingDir,
-            CustomIconPath = customIcon
-        };
+                if (Directory.Exists(pinnedDir))
+                {
+                    foreach (var file in Directory.GetFiles(pinnedDir))
+                    {
+                        if (file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ||
+                            file.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
+                        {
+                            AddIfUnique(ParseShortcut(file), "📌 Pinned");
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 2. shell:AppsFolder via Shell.Application COM (Captures Start menu & Store/UWP apps like Minecraft, Calculator)
+            try
+            {
+                Type? shellAppType = Type.GetTypeFromProgID("Shell.Application");
+                if (shellAppType != null)
+                {
+                    dynamic? shell = Activator.CreateInstance(shellAppType);
+                    if (shell != null)
+                    {
+                        dynamic? folder = shell.NameSpace("shell:AppsFolder");
+                        if (folder != null)
+                        {
+                            foreach (dynamic item in folder.Items())
+                            {
+                                try
+                                {
+                                    string name = item.Name;
+                                    string path = item.Path;
+                                    if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(path))
+                                    {
+                                        bool isStore = path.IndexOf("!", StringComparison.OrdinalIgnoreCase) >= 0;
+                                        AddIfUnique(new GroupItem
+                                        {
+                                            Name = name,
+                                            TargetPath = $"shell:AppsFolder\\{path}",
+                                            Kind = ItemKind.ShellApp
+                                        }, isStore ? "🛍 Store" : "⊞ Installed");
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 3. Desktop Shortcuts (Steam games, etc)
+            string[] desktopDirs =
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory)
+            };
+
+            foreach (var dir in desktopDirs)
+            {
+                if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
+                try
+                {
+                    foreach (var file in Directory.GetFiles(dir))
+                    {
+                        if (file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ||
+                            file.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
+                        {
+                            AddIfUnique(ParseShortcut(file), "🖥 Desktop");
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return results;
+        }
     }
 }

@@ -1,50 +1,55 @@
+using System;
 using Microsoft.Win32;
-using System.Diagnostics;
+using TaskbarGrouper.Services;
 
-namespace TaskbarGrouper.Services;
-
-public static class StartupService
+namespace TaskbarGrouper.Services
 {
-    private const string RunRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string AppValueName = "StackBar";
-
-    public static bool IsRunAtStartupEnabled()
+    public static class StartupService
     {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(RunRegistryPath, writable: false);
-            var val = key?.GetValue(AppValueName) as string;
-            return !string.IsNullOrWhiteSpace(val);
-        }
-        catch
-        {
-            return false;
-        }
-    }
+        private const string RunRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        private const string AppValueName = "StackBar";
 
-    public static void SetRunAtStartup(bool enable)
-    {
-        try
+        public static bool IsRunAtStartupEnabled()
         {
-            using var key = Registry.CurrentUser.OpenSubKey(RunRegistryPath, writable: true);
-            if (key == null) return;
-
-            if (enable)
+            try
             {
-                string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
-                if (!string.IsNullOrEmpty(exePath))
+                using (var key = Registry.CurrentUser.OpenSubKey(RunRegistryPath, false))
                 {
-                    key.SetValue(AppValueName, $"\"{exePath}\" --tray");
+                    var val = key?.GetValue(AppValueName) as string;
+                    return !string.IsNullOrWhiteSpace(val);
                 }
             }
-            else
+            catch
             {
-                key.DeleteValue(AppValueName, throwOnMissingValue: false);
+                return false;
             }
         }
-        catch
+
+        public static void SetRunAtStartup(bool enable)
         {
-            // Ignore registry permission errors
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(RunRegistryPath, true))
+                {
+                    if (key == null) return;
+
+                    if (enable)
+                    {
+                        string exePath = AppInfo.ExePath;
+                        if (!string.IsNullOrEmpty(exePath))
+                        {
+                            key.SetValue(AppValueName, $"\"{exePath}\" --tray");
+                        }
+                    }
+                    else
+                    {
+                        key.DeleteValue(AppValueName, false);
+                    }
+                }
+            }
+            catch
+            {
+            }
         }
     }
 }

@@ -9,19 +9,28 @@
         ShowInTaskbar="False"
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
+        Left="-32000"
         Loaded="Window_Loaded"
         Deactivated="Window_Deactivated"
+        Closing="Window_Closing"
         KeyDown="Window_KeyDown">
 
-    <Grid Margin="16">
+    <Grid Margin="14">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <!-- Top Caret Arrow (when taskbar is at top) -->
+        <Canvas x:Name="TopCaretCanvas" Grid.Row="0" Height="8" HorizontalAlignment="Stretch" Visibility="Collapsed" ClipToBounds="False">
+            <Polygon x:Name="TopCaretPolygon" Points="0,8 16,8 8,0" Fill="#F614151D" Stroke="#33FFFFFF" StrokeThickness="1"/>
+        </Canvas>
+
+        <!-- Main Card -->
         <Border x:Name="RootBorder"
-                Grid.Row="0"
-                CornerRadius="18"
+                Grid.Row="1"
+                CornerRadius="16"
                 BorderThickness="1.2"
                 Padding="16,14,16,14"
                 RenderTransformOrigin="0.5,1.0"
@@ -40,67 +49,66 @@
             </Border.BorderBrush>
             <Border.RenderTransform>
                 <TransformGroup>
-                    <ScaleTransform x:Name="PopupScale" ScaleX="0.90" ScaleY="0.90"/>
-                    <TranslateTransform x:Name="PopupTranslate" Y="14"/>
+                    <ScaleTransform x:Name="PopupScale" ScaleX="0.92" ScaleY="0.92"/>
+                    <TranslateTransform x:Name="PopupTranslate" Y="10"/>
                 </TransformGroup>
             </Border.RenderTransform>
             <Border.Effect>
-                <DropShadowEffect BlurRadius="26" ShadowDepth="8" Opacity="0.6" Color="Black"/>
+                <DropShadowEffect BlurRadius="22" ShadowDepth="6" Opacity="0.55" Color="Black"/>
             </Border.Effect>
 
             <StackPanel>
-                <!-- Header Row -->
-                <DockPanel Margin="4,0,4,10">
+                <!-- Header -->
+                <DockPanel Margin="2,0,2,8">
                     <Button DockPanel.Dock="Right"
                             Click="EditStackButton_Click"
-                            ToolTip="Edit this Stack in StackBar Manager"
+                            ToolTip="Open in StackBar Studio"
                             Background="Transparent"
                             BorderThickness="0"
                             Cursor="Hand"
                             Padding="6,2">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
-                                <Border x:Name="GearBorder" CornerRadius="6" Padding="6,3" Background="Transparent">
+                                <Border x:Name="Gb" CornerRadius="6" Padding="6,3" Background="Transparent">
                                     <TextBlock Text="⚙" Foreground="#88FFFFFF" FontSize="12"/>
                                 </Border>
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="GearBorder" Property="Background" Value="#25FFFFFF"/>
+                                        <Setter TargetName="Gb" Property="Background" Value="#25FFFFFF"/>
                                     </Trigger>
                                 </ControlTemplate.Triggers>
                             </ControlTemplate>
                         </Button.Template>
                     </Button>
 
-                    <Border x:Name="CountPill"
-                            DockPanel.Dock="Right"
+                    <Border DockPanel.Dock="Right"
                             CornerRadius="8"
                             Background="#1FFFFFFF"
                             Padding="7,2"
                             Margin="0,0,4,0"
                             VerticalAlignment="Center">
-                        <TextBlock x:Name="ItemCountBadge"
-                                   Text="0"
-                                   Foreground="#AAFFFFFF"
-                                   FontSize="10.5"
-                                   FontWeight="SemiBold"/>
+                        <TextBlock x:Name="ItemCountBadge" Text="0" Foreground="#AAFFFFFF" FontSize="10.5" FontWeight="SemiBold"/>
                     </Border>
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Border x:Name="AccentDot" Width="8" Height="8" CornerRadius="4" Background="#3A6DF0" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="GroupTitleText"
-                                   Text="Stack"
-                                   Foreground="#F5FFFFFF"
-                                   FontSize="13.5"
-                                   FontWeight="SemiBold"
-                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="GroupTitleText" Text="Stack" Foreground="#F5FFFFFF" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </DockPanel>
 
-                <!-- Subtle Hairline Divider -->
-                <Border Height="1" Background="#1AFFFFFF" Margin="2,0,2,10"/>
+                <!-- Divider -->
+                <Border Height="1" Background="#16FFFFFF" Margin="0,0,0,10"/>
 
-                <!-- Apps Grid -->
+                <!-- Empty State Message -->
+                <TextBlock x:Name="EmptyNotice"
+                           Text="This stack is empty. Open Studio to add apps."
+                           Foreground="#77FFFFFF"
+                           FontSize="12"
+                           TextAlignment="Center"
+                           Margin="16,12"
+                           Visibility="Collapsed"/>
+
+                <!-- Grid -->
                 <ItemsControl x:Name="ItemsGrid">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -121,8 +129,8 @@
                                 <Button.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Launch App" Click="ContextLaunch_Click" CommandParameter="{Binding}"/>
-                                        <MenuItem Header="Run as Administrator" Click="ContextRunAdmin_Click" CommandParameter="{Binding}"/>
-                                        <MenuItem Header="Open File Location" Click="ContextOpenLocation_Click" CommandParameter="{Binding}"/>
+                                        <MenuItem Header="Run as Administrator" Click="ContextRunAdmin_Click" CommandParameter="{Binding}" Visibility="{Binding AdminOptionVisibility}"/>
+                                        <MenuItem Header="Open File Location" Click="ContextOpenLocation_Click" CommandParameter="{Binding}" Visibility="{Binding FileLocationVisibility}"/>
                                     </ContextMenu>
                                 </Button.ContextMenu>
                                 <Button.Template>
@@ -132,20 +140,14 @@
                                                 Background="#08FFFFFF"
                                                 BorderBrush="#12FFFFFF"
                                                 BorderThickness="1"
-                                                Padding="6"
-                                                RenderTransformOrigin="0.5,0.5">
-                                            <Border.RenderTransform>
-                                                <ScaleTransform x:Name="TileScale" ScaleX="1" ScaleY="1"/>
-                                            </Border.RenderTransform>
+                                                Padding="6">
                                             <Grid>
-                                                <!-- Hotkey badge (1..9) -->
                                                 <TextBlock Text="{Binding HotkeyHint}"
                                                            HorizontalAlignment="Right"
                                                            VerticalAlignment="Top"
                                                            FontSize="9"
                                                            Foreground="#44FFFFFF"
                                                            Margin="0,-2,2,0"/>
-
                                                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                                                     <Grid Width="38" Height="38" Margin="0,2,0,4">
                                                         <Image Source="{Binding Icon}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
@@ -179,13 +181,9 @@
             </StackPanel>
         </Border>
 
-        <!-- Bottom Caret Arrow pointing to the clicked Taskbar Icon -->
-        <Canvas x:Name="CaretCanvas" Grid.Row="1" Height="10" HorizontalAlignment="Stretch" ClipToBounds="False">
-            <Polygon x:Name="CaretPolygon"
-                     Points="0,0 16,0 8,9"
-                     Fill="#F614151D"
-                     Stroke="#33FFFFFF"
-                     StrokeThickness="1"/>
+        <!-- Bottom Caret Arrow (when taskbar is at bottom) -->
+        <Canvas x:Name="BottomCaretCanvas" Grid.Row="2" Height="8" HorizontalAlignment="Stretch" ClipToBounds="False">
+            <Polygon x:Name="BottomCaretPolygon" Points="0,0 16,0 8,8" Fill="#F614151D" Stroke="#33FFFFFF" StrokeThickness="1"/>
         </Canvas>
     </Grid>
 </Window>

@@ -1,57 +1,47 @@
 <div align="center">
   <img src="src/TaskbarGrouper/Assets/app_icon.png" width="96" height="96" alt="StackBar Icon" />
   <h1>StackBar</h1>
-  <p><strong>macOS &amp; iOS-style Taskbar Folders for Windows 11</strong></p>
+  <p><strong>Native macOS &amp; iOS-style Taskbar Folders for Windows 10 &amp; 11</strong></p>
 </div>
 
 ---
 
-**StackBar** declutters your Windows 11 taskbar by grouping rarely-used or categorized applications (*Gaming*, *AI & Dev*, *Creative*, *Utilities*) into sleek, dark-glassmorphic pop-up folders anchored directly to your taskbar.
+**StackBar** declutters your Windows taskbar by grouping rarely-used or categorized applications (*Gaming*, *AI & Dev*, *Creative*, *Web*) into sleek pop-up folders anchored directly above your taskbar icons.
 
-## ✨ Key Features
+## ✨ Highlights
 
-- **📌 Separate Pinned Taskbar Folders**: Generate custom `.lnk` shortcuts per category with distinct `AppUserModelID`s so Windows 11 allows pinning multiple StackBar folders side-by-side on the taskbar.
-- **🎨 Dual Taskbar Icon Engine**:
-  - **iOS 2×2 Mini-Icon Grid**: Automatically composites the first 4 apps inside a folder into a 256×256 rounded dark-glass squircle `.ico` with live preview inside the Studio.
-  - **Emoji Badge Icons**: Render crisp category emoji badges (`🎮`, `✨`, `🌐`, `🗂️`) with customizable accent borders.
-- **🚀 < 15ms Instant-Open Daemon**: Runs silently in the Windows System Tray and listens over a Named Pipe (`StackBar_InstantFlyout_Pipe`) so clicking any pinned taskbar folder pops open the pre-warmed flyout instantaneously with zero cold-start lag.
-- **⚡ Multi-Source Taskbar & System Importer**: One-click **Import From My Taskbar** scans:
-  - Pinned Taskbar shortcuts (`.lnk` & `.url`)
-  - Currently running Taskbar applications (*Steam*, *Minecraft*, *Discord*, etc.)
-  - Desktop & Start Menu shortcuts (including Steam `.url` game shortcuts with custom icons)
-- **⌨️ Power-User Flyout**:
-  - Number hotkeys (`1`–`9`) to launch apps immediately (`Ctrl + 1..9` runs as Administrator)
-  - Right-click context menu (*Launch*, *Run as Administrator*, *Open File Location*)
-  - 6 folder accent color themes (**Ocean**, **Neon**, **Emerald**, **Amber**, **Crimson**, **Slate**)
-  - Optional *Run in Tray at Windows Startup* toggle
+- **Zero Runtime Dependencies**: Re-targeted to **.NET Framework 4.8** (pre-installed on every Windows 10 1903+ and Windows 11 machine). Runs directly out of the box without requiring the .NET Desktop Runtime or any external redistributables.
+- **Single Standalone Executable**: Entire application and setup are packaged into a single ~580 KB binary with no auxiliary DLLs.
+- **Separate Pinned Taskbar Folders**: Generates custom `.lnk` shortcuts per category with distinct `AppUserModelID`s (`StackBar.Group.<id>`), allowing you to pin multiple StackBar folders side-by-side on the taskbar.
+- **Persistent Shortcut Storage**: Shortcuts imported from the pinned taskbar are duplicated to `%AppData%\StackBar\Links` to prevent broken links when unpinning items from Windows.
+- **Dual Icon Engine**:
+  - **iOS 2×2 Mini-Grid**: Automatically composites the first 4 apps inside a folder into a version-hashed 256×256 squircle `.ico` (bypassing Windows taskbar icon cache stalls).
+  - **Emoji Badge Icons**: Choose crisp category emoji glyphs with customizable accent color borders.
+- **Background Tray Daemon**: Sits in the Windows System Tray and listens on a user-scoped named pipe. Clicking a pinned shortcut delegates to the resident process with foreground window activation rights.
+- **Multi-Source Importer**:
+  - Pinned Taskbar icons (`.lnk` & `.url`)
+  - `shell:AppsFolder` (Start Menu apps, Windows Store / UWP apps like Minecraft, Calculator)
+  - Desktop shortcuts (including Steam `.url` game shortcuts)
+- **Keyboard & Admin Shortcuts**:
+  - Number keys `1`–`9` to launch apps instantly
+  - `Ctrl + Shift + Click` or `Ctrl + Shift + 1..9` to Run as Administrator
 
 ---
 
-## 📦 Installation & Building
+## 📦 Building & Installation
 
-### Option 1: Build the Single-File Setup Installer (`StackBar-Setup.exe`)
+### Option 1: Run the Standalone Setup
+Run `StackBar-Setup.exe` from the `artifacts\` folder:
+- Installs to `%LocalAppData%\Programs\StackBar\StackBar.exe`
+- Creates Desktop & Start Menu shortcuts
+- Configures background tray startup on login
+- Registers in Windows *Installed Apps* with an automated uninstaller
 
-Run the included PowerShell packaging script from the repository root:
-
+### Option 2: Build from Source
+Requires the .NET SDK (Windows).
 ```powershell
-.\build-installer.ps1
-```
-
-This compiles `StackBar` and packages it into a standalone graphical installer at **`installer\StackBar-Setup.exe`**, which installs StackBar to `%LocalAppData%\Programs\StackBar`, creates Desktop & Start Menu shortcuts, registers Windows Startup, and includes a built-in Uninstaller.
-
-### Option 2: Build & Run from Source
-
-Requires the [.NET 8.0 SDK (Windows)](https://dotnet.microsoft.com/download/dotnet/8.0).
-
-```powershell
-# Build the solution
-dotnet build
-
-# Run StackBar Studio (and start the background Tray listener)
-dotnet run --project src/TaskbarGrouper
-
-# Open a specific Stack folder flyout directly via CLI
-dotnet run --project src/TaskbarGrouper -- --group gaming
+# Build both StackBar.exe and StackBar-Setup.exe to artifacts/
+.\build.ps1
 ```
 
 ---
@@ -60,12 +50,15 @@ dotnet run --project src/TaskbarGrouper -- --group gaming
 
 ```text
 ├── src/
-│   ├── TaskbarGrouper/             # Main StackBar WPF + Win32 Desktop App
-│   │   ├── Assets/                 # Multi-res app_icon.ico & app_icon.png
-│   │   ├── Models/                 # GroupModels (AppConfig, AppGroup, GroupItem)
-│   │   ├── Services/               # IconHelper, ShortcutService, IpcService, NativePositioningService, StartupService
-│   │   └── Views/                  # MainWindow (Studio), FlyoutWindow (Popup), TaskbarImporterWindow
-│   └── StackBar.Installer/         # Standalone GUI Setup & Uninstaller (StackBar-Setup.exe)
-├── build-installer.ps1             # Automated build script producing installer/StackBar-Setup.exe
-└── TaskbarGrouper.sln              # Visual Studio / .NET Solution
+│   └── TaskbarGrouper/             # Main StackBar Windows Desktop Project (.NET Framework 4.8)
+│       ├── Assets/                 # Multi-res app_icon.ico & app_icon.png
+│       ├── Common/                 # Polyfills & string utilities
+│       ├── Models/                 # AppConfig, AppGroup, GroupItem
+│       ├── Services/               # IconHelper, ShortcutService, IpcService, NativePositioningService, ConfigService, AppLogger
+│       └── Views/                  # MainWindow (Studio), FlyoutWindow, TaskbarImporterWindow, SetupWindow
+├── artifacts/                      # Packaged standalone binaries (StackBar.exe & StackBar-Setup.exe)
+├── docs/
+│   └── FIX_PLAN.md                 # Detailed issue breakdown & remediation roadmap
+├── build.ps1                       # Automated build & staging script
+└── TaskbarGrouper.sln
 ```

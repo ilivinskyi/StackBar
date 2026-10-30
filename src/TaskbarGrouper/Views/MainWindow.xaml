@@ -9,11 +9,9 @@
         WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/app_icon.ico"
         Background="#12131A"
-        Foreground="White"
-        Loaded="Window_Loaded">
+        Foreground="White">
 
     <Window.Resources>
-        <!-- Sleek Primary Button Style -->
         <Style x:Key="PrimaryBtn" TargetType="Button">
             <Setter Property="Background" Value="#3A6DF0"/>
             <Setter Property="Foreground" Value="White"/>
@@ -39,7 +37,6 @@
             </Setter>
         </Style>
 
-        <!-- Secondary Surface Button Style -->
         <Style x:Key="SurfaceBtn" TargetType="Button">
             <Setter Property="Background" Value="#252734"/>
             <Setter Property="Foreground" Value="#EEFFFFFF"/>
@@ -66,7 +63,6 @@
             </Setter>
         </Style>
 
-        <!-- Small Icon Action Button -->
         <Style x:Key="RowActionBtn" TargetType="Button">
             <Setter Property="Background" Value="#1EFFFFFF"/>
             <Setter Property="Foreground" Value="#DDFFFFFF"/>
@@ -90,7 +86,6 @@
             </Setter>
         </Style>
 
-        <!-- Dark TextBox Style -->
         <Style x:Key="DarkTextBox" TargetType="TextBox">
             <Setter Property="Background" Value="#181922"/>
             <Setter Property="Foreground" Value="White"/>
@@ -122,19 +117,17 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- Left Sidebar: Stack Folders + Global Settings -->
+        <!-- Left Sidebar -->
         <Border Grid.Column="0" Background="#1B1C26" CornerRadius="14" Padding="14" BorderBrush="#22FFFFFF" BorderThickness="1">
             <DockPanel>
-                <!-- Brand Header -->
                 <DockPanel DockPanel.Dock="Top" Margin="4,2,4,14">
                     <Image Source="pack://application:,,,/Assets/app_icon.png" Width="32" Height="32" Margin="0,0,10,0" RenderOptions.BitmapScalingMode="HighQuality"/>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="StackBar" FontSize="16" FontWeight="Bold" Foreground="White"/>
-                        <TextBlock Text="Taskbar Folder Studio" FontSize="10.5" Foreground="#88FFFFFF"/>
+                        <TextBlock Text="Taskbar Folder Studio v1.1" FontSize="10.5" Foreground="#88FFFFFF"/>
                     </StackPanel>
                 </DockPanel>
 
-                <!-- Bottom Sidebar Controls -->
                 <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
                     <Button Content="+ Create New Stack"
                             Click="AddGroup_Click"
@@ -158,7 +151,6 @@
                     </Border>
                 </StackPanel>
 
-                <!-- Stacks List -->
                 <ListBox x:Name="GroupsListBox"
                          Background="Transparent"
                          BorderThickness="0"
@@ -207,11 +199,10 @@
             </DockPanel>
         </Border>
 
-        <!-- Right Content: Selected Stack Editor -->
+        <!-- Right Content -->
         <Border Grid.Column="2" Background="#1B1C26" CornerRadius="14" Padding="20" BorderBrush="#22FFFFFF" BorderThickness="1">
             <DockPanel x:Name="GroupEditorPanel">
-
-                <!-- Top Header Card: Live 64x64 Generated Icon Preview + Primary Actions -->
+                <!-- Top Header Card -->
                 <Border DockPanel.Dock="Top" Background="#14151D" CornerRadius="12" Padding="16" Margin="0,0,0,14" BorderBrush="#22FFFFFF" BorderThickness="1">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -220,7 +211,6 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <!-- Row 0: Live Folder Icon Preview + Title + Buttons -->
                         <DockPanel Grid.Row="0">
                             <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
                                 <Button Content="👁 Preview Flyout"
@@ -233,8 +223,7 @@
                             </StackPanel>
 
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <!-- Live 56x56 Composite .ico Preview -->
-                                <Border Width="56" Height="56" CornerRadius="12" Background="#1E202B" BorderBrush="#33FFFFFF" BorderThickness="1" Margin="0,0,14,0" Padding="2" ToolTip="Live preview of the taskbar folder icon that will be generated">
+                                <Border Width="56" Height="56" CornerRadius="12" Background="#1E202B" BorderBrush="#33FFFFFF" BorderThickness="1" Margin="0,0,14,0" Padding="2">
                                     <Image x:Name="LiveFolderIconPreview" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                                 </Border>
                                 <StackPanel VerticalAlignment="Center">
@@ -244,7 +233,7 @@
                             </StackPanel>
                         </DockPanel>
 
-                        <!-- Row 2: Folder Customization Controls -->
+                        <!-- Controls -->
                         <WrapPanel Grid.Row="2" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Margin="0,4,16,4" VerticalAlignment="Center">
                                 <TextBlock Text="Folder Name:" Foreground="#AAFFFFFF" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
@@ -256,34 +245,33 @@
                                 <TextBox x:Name="GroupGlyphBox" Width="42" TextAlignment="Center" Style="{StaticResource DarkTextBox}" TextChanged="GroupMeta_Changed"/>
                             </StackPanel>
 
-                            <StackPanel Orientation="Horizontal" Margin="0,4,16,4" VerticalAlignment="Center">
-                                <TextBlock Text="Icon Style:" Foreground="#AAFFFFFF" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <ComboBox x:Name="IconModeCombo" Width="155" Padding="6,4" SelectionChanged="IconModeCombo_SelectionChanged">
-                                    <ComboBoxItem Content="iOS 2x2 Mini-Icon Grid"/>
-                                    <ComboBoxItem Content="Emoji Badge Icon"/>
-                                </ComboBox>
-                            </StackPanel>
-
+                            <!-- Theme swatches -->
                             <StackPanel Orientation="Horizontal" Margin="0,4,16,4" VerticalAlignment="Center">
                                 <TextBlock Text="Accent:" Foreground="#AAFFFFFF" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <ComboBox x:Name="AccentColorCombo" Width="105" Padding="6,4" SelectionChanged="AccentColorCombo_SelectionChanged">
-                                    <ComboBoxItem Content="🔵 Ocean" Tag="#3A6DF0"/>
-                                    <ComboBoxItem Content="🟣 Neon" Tag="#8B5CF6"/>
-                                    <ComboBoxItem Content="🟢 Emerald" Tag="#10B981"/>
-                                    <ComboBoxItem Content="🟠 Amber" Tag="#F59E0B"/>
-                                    <ComboBoxItem Content="🔴 Crimson" Tag="#EF4444"/>
-                                    <ComboBoxItem Content="⚪ Slate" Tag="#64748B"/>
-                                </ComboBox>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <RadioButton x:Name="ColorBlue" GroupName="AccentColor" Tag="#3A6DF0" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Ocean Blue">
+                                        <Border Width="16" Height="16" CornerRadius="8" Background="#3A6DF0"/>
+                                    </RadioButton>
+                                    <RadioButton x:Name="ColorPurple" GroupName="AccentColor" Tag="#8B5CF6" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Neon Purple">
+                                        <Border Width="16" Height="16" CornerRadius="8" Background="#8B5CF6"/>
+                                    </RadioButton>
+                                    <RadioButton x:Name="ColorEmerald" GroupName="AccentColor" Tag="#10B981" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Emerald Green">
+                                        <Border Width="16" Height="16" CornerRadius="8" Background="#10B981"/>
+                                    </RadioButton>
+                                    <RadioButton x:Name="ColorAmber" GroupName="AccentColor" Tag="#F59E0B" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Amber Orange">
+                                        <Border Width="16" Height="16" CornerRadius="8" Background="#F59E0B"/>
+                                    </RadioButton>
+                                    <RadioButton x:Name="ColorRed" GroupName="AccentColor" Tag="#EF4444" Checked="AccentRadio_Checked" Margin="2,0" Cursor="Hand" ToolTip="Crimson Red">
+                                        <Border Width="16" Height="16" CornerRadius="8" Background="#EF4444"/>
+                                    </RadioButton>
+                                </StackPanel>
                             </StackPanel>
 
+                            <!-- Icon Style Radio -->
                             <StackPanel Orientation="Horizontal" Margin="0,4,16,4" VerticalAlignment="Center">
-                                <TextBlock Text="Columns:" Foreground="#AAFFFFFF" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <ComboBox x:Name="ColumnsCombo" Width="52" Padding="6,4" SelectionChanged="ColumnsCombo_SelectionChanged">
-                                    <ComboBoxItem Content="3"/>
-                                    <ComboBoxItem Content="4"/>
-                                    <ComboBoxItem Content="5"/>
-                                    <ComboBoxItem Content="6"/>
-                                </ComboBox>
+                                <TextBlock Text="Style:" Foreground="#AAFFFFFF" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <RadioButton x:Name="StyleGridRadio" GroupName="IconStyle" Content="2x2 Grid" Checked="StyleRadio_Checked" Foreground="#DDD" FontSize="11.5" Margin="0,0,6,0"/>
+                                <RadioButton x:Name="StyleEmojiRadio" GroupName="IconStyle" Content="Emoji" Checked="StyleRadio_Checked" Foreground="#DDD" FontSize="11.5"/>
                             </StackPanel>
 
                             <CheckBox x:Name="ShowLabelsCheck"
@@ -299,10 +287,10 @@
                     </Grid>
                 </Border>
 
-                <!-- Bottom Action Bar -->
+                <!-- Bottom Bar -->
                 <DockPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-                        <Button Content="⚡ Import From My Taskbar"
+                        <Button Content="⚡ Import From Taskbar / System"
                                 Click="ImportTaskbar_Click"
                                 Style="{StaticResource SurfaceBtn}"
                                 Foreground="#7CB3FF"
@@ -313,7 +301,7 @@
                     </StackPanel>
 
                     <TextBlock x:Name="StatusText"
-                               Text="Drag &amp; drop any .exe or .lnk files into the list, or import directly from your taskbar."
+                               Text="Drag &amp; drop any .exe or .lnk files into the list, or import from taskbar."
                                FontSize="11.5"
                                Foreground="#88FFFFFF"
                                VerticalAlignment="Center"
@@ -322,7 +310,7 @@
                                Margin="12,0,0,0"/>
                 </DockPanel>
 
-                <!-- Apps List + Empty State Overlay -->
+                <!-- List & Empty Overlay -->
                 <Grid>
                     <ListBox x:Name="ItemsListBox"
                              Background="#14151D"
@@ -369,7 +357,6 @@
 
                                     <Image Grid.Column="0" Source="{Binding Icon}" Width="28" Height="28" Margin="0,0,12,0" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
 
-                                    <!-- Inline Editable App Display Name -->
                                     <TextBox Grid.Column="1"
                                              Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              Style="{StaticResource DarkTextBox}"
@@ -385,7 +372,6 @@
                                                TextTrimming="CharacterEllipsis"
                                                ToolTip="{Binding TargetPath}"/>
 
-                                    <!-- Per-Row Reorder & Delete Buttons -->
                                     <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
                                         <Button Content="↑" ToolTip="Move Up" Tag="{Binding}" Click="MoveItemUp_Click" Style="{StaticResource RowActionBtn}"/>
                                         <Button Content="↓" ToolTip="Move Down" Tag="{Binding}" Click="MoveItemDown_Click" Style="{StaticResource RowActionBtn}"/>
@@ -396,7 +382,6 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
 
-                    <!-- Empty Dropzone Overlay -->
                     <Border x:Name="EmptyStateOverlay"
                             Visibility="Collapsed"
                             IsHitTestVisible="False"
@@ -407,7 +392,7 @@
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                             <TextBlock Text="📥" FontSize="34" HorizontalAlignment="Center" Margin="0,0,0,8"/>
                             <TextBlock Text="This Stack folder is empty" FontSize="15" FontWeight="SemiBold" Foreground="#DDFFFFFF" HorizontalAlignment="Center"/>
-                            <TextBlock Text="Click '⚡ Import From My Taskbar' below, or drag &amp; drop shortcuts here" FontSize="12" Foreground="#77FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                            <TextBlock Text="Click '⚡ Import From Taskbar' below, or drag &amp; drop shortcuts here" FontSize="12" Foreground="#77FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>

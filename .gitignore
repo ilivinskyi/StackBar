@@ -42,6 +42,7 @@ out/
 release/
 release-v2/
 installer/
-src/StackBar.Installer/Payload/
+artifacts/
+src/StackBar.Installer/
 *.lnk
 

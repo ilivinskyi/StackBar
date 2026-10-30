@@ -1,107 +1,106 @@
+using System;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Interop;
+using System.Windows.Forms;
+using StackBar.Common;
 
-namespace TaskbarGrouper.Services;
-
-public static class NativePositioningService
+namespace TaskbarGrouper.Services
 {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT
+    public static class NativePositioningService
     {
-        public int X;
-        public int Y;
-    }
-
-    [DllImport("user32.dll")]
-    public static extern bool GetCursorPos(out POINT lpPoint);
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
-
-    private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
-    private const int DWMWCP_ROUND = 2;
-    private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
-    private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
-    private const int DWMSBT_TRANSIENTWINDOW = 3; // Acrylic
-
-    public static void ApplyWindows11AcrylicEffects(Window window)
-    {
-        try
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT
         {
-            var hwnd = new WindowInteropHelper(window).Handle;
-            if (hwnd == IntPtr.Zero) return;
-
-            int darkMode = 1;
-            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
-
-            int cornerPref = DWMWCP_ROUND;
-            DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref cornerPref, sizeof(int));
-
-            int backdrop = DWMSBT_TRANSIENTWINDOW;
-            DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ref backdrop, sizeof(int));
-        }
-        catch
-        {
-            // Ignore on older OS versions
-        }
-    }
-
-    /// <summary>
-    /// Positions a WPF window directly above (or adjacent to) the Windows taskbar near the mouse cursor,
-    /// and returns the horizontal offset (in DIPs) of the cursor relative to the window's left edge for caret alignment.
-    /// </summary>
-    public static double PositionNearTaskbarCursorWithCaret(Window window, int? overrideCursorX = null, int? overrideCursorY = null)
-    {
-        GetCursorPos(out POINT cursor);
-        if (overrideCursorX is > 0 && overrideCursorY is > 0)
-        {
-            cursor.X = overrideCursorX.Value;
-            cursor.Y = overrideCursorY.Value;
+            public int X;
+            public int Y;
         }
 
-        var screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(cursor.X, cursor.Y));
-        var workArea = screen.WorkingArea;
-        var screenBounds = screen.Bounds;
+        [DllImport("user32.dll")]
+        public static extern bool GetCursorPos(out POINT lpPoint);
 
-        var source = PresentationSource.FromVisual(window);
-        double dpiX = source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
-        double dpiY = source?.CompositionTarget?.TransformToDevice.M22 ?? 1.0;
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
 
-        double winWidthPx = window.ActualWidth * dpiX;
-        double winHeightPx = window.ActualHeight * dpiY;
+        [DllImport("shcore.dll")]
+        private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
 
-        const int marginPx = 6;
+        private const uint MONITOR_DEFAULTTONEAREST = 2;
 
-        double leftPx = cursor.X - (winWidthPx / 2.0);
-        if (leftPx < workArea.Left + marginPx)
-            leftPx = workArea.Left + marginPx;
-        if (leftPx + winWidthPx > workArea.Right - marginPx)
-            leftPx = workArea.Right - winWidthPx - marginPx;
-
-        double topPx;
-        if (workArea.Top > screenBounds.Top)
+        public static double PositionNearTaskbarCursorWithCaret(Window window, int? overrideCursorX, int? overrideCursorY, out bool isTaskbarTop)
         {
-            topPx = workArea.Top + marginPx;
-        }
-        else if (workArea.Left > screenBounds.Left)
-        {
-            leftPx = workArea.Left + marginPx;
-            topPx = Math.Clamp(cursor.Y - (winHeightPx / 2.0), workArea.Top + marginPx, workArea.Bottom - winHeightPx - marginPx);
-        }
-        else if (workArea.Right < screenBounds.Right)
-        {
-            leftPx = workArea.Right - winWidthPx - marginPx;
-            topPx = Math.Clamp(cursor.Y - (winHeightPx / 2.0), workArea.Top + marginPx, workArea.Bottom - winHeightPx - marginPx);
-        }
-        else
-        {
-            topPx = workArea.Bottom - winHeightPx - marginPx;
-        }
+            isTaskbarTop = false;
+            POINT cursor;
+            GetCursorPos(out cursor);
+            if (overrideCursorX.HasValue && overrideCursorX.Value > 0 &&
+                overrideCursorY.HasValue && overrideCursorY.Value > 0)
+            {
+                cursor.X = overrideCursorX.Value;
+                cursor.Y = overrideCursorY.Value;
+            }
 
-        window.Left = leftPx / dpiX;
-        window.Top = topPx / dpiY;
+            var screen = Screen.FromPoint(new System.Drawing.Point(cursor.X, cursor.Y));
+            var workArea = screen.WorkingArea;
+            var screenBounds = screen.Bounds;
 
-        return (cursor.X - leftPx) / dpiX;
+            // Per-monitor DPI detection via shcore
+            double dpiScaleX = 1.0;
+            double dpiScaleY = 1.0;
+            try
+            {
+                IntPtr hMon = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+                if (hMon != IntPtr.Zero && GetDpiForMonitor(hMon, 0, out uint dx, out uint dy) == 0)
+                {
+                    dpiScaleX = dx / 96.0;
+                    dpiScaleY = dy / 96.0;
+                }
+            }
+            catch
+            {
+                var source = PresentationSource.FromVisual(window);
+                dpiScaleX = source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+                dpiScaleY = source?.CompositionTarget?.TransformToDevice.M22 ?? 1.0;
+            }
+
+            double winWidthPx = window.ActualWidth * dpiScaleX;
+            double winHeightPx = window.ActualHeight * dpiScaleY;
+
+            const int marginPx = 4;
+
+            double leftPx = cursor.X - (winWidthPx / 2.0);
+            if (leftPx < workArea.Left + marginPx)
+                leftPx = workArea.Left + marginPx;
+            if (leftPx + winWidthPx > workArea.Right - marginPx)
+                leftPx = workArea.Right - winWidthPx - marginPx;
+
+            double topPx;
+            if (workArea.Top > screenBounds.Top)
+            {
+                // Taskbar is at top
+                isTaskbarTop = true;
+                topPx = workArea.Top + marginPx;
+            }
+            else if (workArea.Left > screenBounds.Left)
+            {
+                // Left taskbar
+                leftPx = workArea.Left + marginPx;
+                topPx = Polyfills.Clamp(cursor.Y - (winHeightPx / 2.0), workArea.Top + marginPx, workArea.Bottom - winHeightPx - marginPx);
+            }
+            else if (workArea.Right < screenBounds.Right)
+            {
+                // Right taskbar
+                leftPx = workArea.Right - winWidthPx - marginPx;
+                topPx = Polyfills.Clamp(cursor.Y - (winHeightPx / 2.0), workArea.Top + marginPx, workArea.Bottom - winHeightPx - marginPx);
+            }
+            else
+            {
+                // Default: Taskbar at bottom
+                topPx = workArea.Bottom - winHeightPx - marginPx;
+            }
+
+            window.Left = leftPx / dpiScaleX;
+            window.Top = topPx / dpiScaleY;
+
+            return (cursor.X - leftPx) / dpiScaleX;
+        }
     }
 }

@@ -1,159 +1,195 @@
+using System;
 using System.Drawing;
+using System.IO;
+using System.Linq;
 using System.Windows;
 using TaskbarGrouper.Models;
 using TaskbarGrouper.Services;
 using TaskbarGrouper.Views;
 
-namespace TaskbarGrouper;
-
-public partial class App : System.Windows.Application
+namespace TaskbarGrouper
 {
-    private ConfigService _configService = null!;
-    private IpcService? _ipcService;
-    private System.Windows.Forms.NotifyIcon? _trayIcon;
-    private MainWindow? _mainWindow;
-    private FlyoutWindow? _activeFlyout;
-
-    private bool _isExiting;
-
-    protected override void OnStartup(StartupEventArgs e)
+    public partial class App : Application
     {
-        base.OnStartup(e);
-        DispatcherUnhandledException += (_, args) =>
+        private ConfigService _configService = null!;
+        private IpcService? _ipcService;
+        private System.Windows.Forms.NotifyIcon? _trayIcon;
+        private MainWindow? _mainWindow;
+        private FlyoutWindow? _activeFlyout;
+        private bool _isExiting;
+        private string? _lastClosedGroupId;
+        private DateTime _lastClosedTime = DateTime.MinValue;
+
+        public void RunApplication(string? groupId, bool startMinimized, bool isSetup, bool isUninstall)
         {
-            if (_isExiting || args.Exception is ObjectDisposedException or OperationCanceledException)
+            InitializeComponent();
+
+            DispatcherUnhandledException += (_, args) =>
             {
+                if (_isExiting)
+                {
+                    args.Handled = true;
+                    return;
+                }
+                AppLogger.Log("Unhandled UI exception: " + args.Exception);
+                MessageBox.Show($"StackBar encountered an error:\n{args.Exception.Message}", "StackBar", MessageBoxButton.OK, MessageBoxImage.Warning);
                 args.Handled = true;
-                return;
-            }
-            System.Windows.MessageBox.Show($"Unexpected error:\n{args.Exception.Message}", "StackBar", MessageBoxButton.OK, MessageBoxImage.Warning);
-            args.Handled = true;
-        };
-        _configService = new ConfigService();
+            };
 
-        // Check command line args: e.g., --group "gaming"
-        string? groupId = null;
-        bool startMinimized = false;
-        for (int i = 0; i < e.Args.Length; i++)
-        {
-            if (e.Args[i].Equals("--group", StringComparison.OrdinalIgnoreCase) && i + 1 < e.Args.Length)
+            if (isUninstall)
             {
-                groupId = e.Args[i + 1];
-            }
-            else if (e.Args[i].Equals("--tray", StringComparison.OrdinalIgnoreCase))
-            {
-                startMinimized = true;
-            }
-        }
-
-        // Fast-path: If launched with --group <id>, try signaling the warm background instance (<15ms) and exit immediately
-        if (!string.IsNullOrEmpty(groupId))
-        {
-            NativePositioningService.GetCursorPos(out var pt);
-            if (IpcService.TrySignalWarmInstance(groupId, pt.X, pt.Y))
-            {
+                SetupWindow.PerformUninstall();
                 Shutdown();
                 return;
             }
 
-            // No warm instance running yet: show the flyout directly
-            var config = _configService.LoadOrCreateDefault();
-            var group = config.Groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
-                        ?? config.Groups.First();
-            var flyout = new FlyoutWindow(group, pt.X, pt.Y);
-            flyout.Closed += (_, _) => Shutdown();
-            flyout.Show();
-            return;
-        }
-
-        // Resident / Manager Mode: Start Named Pipe listener + System Tray icon for <15ms instant flyout response
-        _ipcService = new IpcService(OnIpcOpenGroupRequested);
-        InitializeTrayIcon();
-
-        if (!startMinimized)
-        {
-            ShowManagerWindow();
-        }
-    }
-
-    private void OnIpcOpenGroupRequested(string groupId, int cursorX, int cursorY)
-    {
-        Dispatcher.Invoke(() =>
-        {
-            var config = _configService.LoadOrCreateDefault();
-            var group = config.Groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
-                        ?? config.Groups.FirstOrDefault();
-            if (group == null) return;
-
-            if (_activeFlyout is { IsVisible: true })
+            if (isSetup)
             {
-                _activeFlyout.Close();
+                var setup = new SetupWindow();
+                setup.Closed += (_, __) => Shutdown();
+                setup.Show();
+                Run();
+                return;
             }
 
-            _activeFlyout = new FlyoutWindow(group, cursorX, cursorY, onEditRequested: ShowManagerWindow);
-            _activeFlyout.Show();
-        });
-    }
+            _configService = new ConfigService();
+            var config = _configService.LoadOrCreateDefault();
 
-    private void ShowManagerWindow()
-    {
-        if (_mainWindow is { IsVisible: true })
-        {
-            _mainWindow.Activate();
-            return;
-        }
+            // Auto-heal pinned taskbar shortcuts if exe path changed
+            ShortcutService.HealPinnedTaskbarShortcuts(config, _configService.AppDataDirectory);
 
-        var config = _configService.LoadOrCreateDefault();
-        _mainWindow = new MainWindow(config, _configService);
-        _mainWindow.Show();
-    }
-
-    private void InitializeTrayIcon()
-    {
-        Icon trayIco = SystemIcons.Application;
-        try
-        {
-            var exePath = Environment.ProcessPath;
-            if (!string.IsNullOrEmpty(exePath))
+            // Fast path (cold start fallback when no tray resident was running)
+            if (!string.IsNullOrEmpty(groupId))
             {
-                var extracted = Icon.ExtractAssociatedIcon(exePath);
-                if (extracted != null)
-                    trayIco = extracted;
+                NativePositioningService.GetCursorPos(out var pt);
+                var group = config.Groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+                            ?? config.Groups.FirstOrDefault();
+                if (group != null)
+                {
+                    var flyout = new FlyoutWindow(group, pt.X, pt.Y, ShowManagerWindow);
+                    flyout.Closed += (_, __) =>
+                    {
+                        // Keep resident in background
+                    };
+                    flyout.Show();
+                }
             }
+
+            // Start resident IPC listener
+            _ipcService = new IpcService(OnIpcOpenGroupRequested, ShowManagerWindow, ExitApplication);
+            InitializeTrayIcon();
+
+            if (!startMinimized && string.IsNullOrEmpty(groupId))
+            {
+                ShowManagerWindow();
+            }
+
+            Run();
         }
-        catch { }
 
-        _trayIcon = new System.Windows.Forms.NotifyIcon
+        private void OnIpcOpenGroupRequested(string groupId, int cursorX, int cursorY)
         {
-            Text = "StackBar — Instant Taskbar Folders",
-            Icon = trayIco,
-            Visible = true
-        };
+            Dispatcher.Invoke(new Action(() =>
+            {
+                // Click-to-toggle logic: If same group was just closed within 500ms, keep it closed
+                if (string.Equals(_lastClosedGroupId, groupId, StringComparison.OrdinalIgnoreCase) &&
+                    (DateTime.Now - _lastClosedTime).TotalMilliseconds < 500)
+                {
+                    _lastClosedGroupId = null;
+                    return;
+                }
 
-        var menu = new System.Windows.Forms.ContextMenuStrip();
-        menu.Items.Add("Open StackBar Manager", null, (_, _) => Dispatcher.Invoke(ShowManagerWindow));
-        menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
-        menu.Items.Add("Exit StackBar", null, (_, _) => Dispatcher.Invoke(() =>
-        {
-            if (_isExiting) return;
-            _isExiting = true;
-            _trayIcon.Visible = false;
-            _ipcService?.Dispose();
-            Shutdown();
-        }));
+                var config = _configService.LoadOrCreateDefault();
+                var group = config.Groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+                            ?? config.Groups.FirstOrDefault();
+                if (group == null) return;
 
-        _trayIcon.ContextMenuStrip = menu;
-        _trayIcon.DoubleClick += (_, _) => Dispatcher.Invoke(ShowManagerWindow);
-    }
+                if (_activeFlyout != null && _activeFlyout.IsVisible)
+                {
+                    _activeFlyout.Close();
+                }
 
-    protected override void OnExit(ExitEventArgs e)
-    {
-        if (_trayIcon != null)
-        {
-            _trayIcon.Visible = false;
-            _trayIcon.Dispose();
+                _activeFlyout = new FlyoutWindow(group, cursorX, cursorY, ShowManagerWindow);
+                _activeFlyout.Closed += (_, __) =>
+                {
+                    _lastClosedGroupId = groupId;
+                    _lastClosedTime = DateTime.Now;
+                };
+                _activeFlyout.Show();
+            }));
         }
-        _ipcService?.Dispose();
-        base.OnExit(e);
+
+        private void ShowManagerWindow()
+        {
+            Dispatcher.Invoke(new Action(() =>
+            {
+                if (_mainWindow != null && _mainWindow.IsVisible)
+                {
+                    _mainWindow.Activate();
+                    return;
+                }
+
+                var config = _configService.LoadOrCreateDefault();
+                _mainWindow = new MainWindow(config, _configService);
+                _mainWindow.Show();
+            }));
+        }
+
+        private void InitializeTrayIcon()
+        {
+            Icon trayIco = SystemIcons.Application;
+            try
+            {
+                var extracted = Icon.ExtractAssociatedIcon(AppInfo.ExePath);
+                if (extracted != null) trayIco = extracted;
+            }
+            catch { }
+
+            _trayIcon = new System.Windows.Forms.NotifyIcon
+            {
+                Text = "StackBar — Taskbar Folders",
+                Icon = trayIco,
+                Visible = true
+            };
+
+            var menu = new System.Windows.Forms.ContextMenuStrip();
+            menu.Items.Add("Open StackBar Studio", null, (_, __) => ShowManagerWindow());
+            menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+            menu.Items.Add("Exit StackBar", null, (_, __) => ExitApplication());
+
+            _trayIcon.ContextMenuStrip = menu;
+            _trayIcon.DoubleClick += (_, __) => ShowManagerWindow();
+        }
+
+        private void ExitApplication()
+        {
+            Dispatcher.Invoke(new Action(() =>
+            {
+                if (_isExiting) return;
+                _isExiting = true;
+                if (_trayIcon != null)
+                {
+                    _trayIcon.Visible = false;
+                    _trayIcon.Dispose();
+                }
+                _ipcService?.Dispose();
+                Shutdown();
+            }));
+        }
+
+        protected override void OnExit(ExitEventArgs e)
+        {
+            if (!_isExiting)
+            {
+                _isExiting = true;
+                if (_trayIcon != null)
+                {
+                    _trayIcon.Visible = false;
+                    _trayIcon.Dispose();
+                }
+                _ipcService?.Dispose();
+            }
+            base.OnExit(e);
+        }
     }
 }
