@@ -14,11 +14,18 @@ public partial class App : System.Windows.Application
     private MainWindow? _mainWindow;
     private FlyoutWindow? _activeFlyout;
 
+    private bool _isExiting;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         DispatcherUnhandledException += (_, args) =>
         {
+            if (_isExiting || args.Exception is ObjectDisposedException or OperationCanceledException)
+            {
+                args.Handled = true;
+                return;
+            }
             System.Windows.MessageBox.Show($"Unexpected error:\n{args.Exception.Message}", "StackBar", MessageBoxButton.OK, MessageBoxImage.Warning);
             args.Handled = true;
         };
@@ -115,6 +122,8 @@ public partial class App : System.Windows.Application
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         menu.Items.Add("Exit StackBar", null, (_, _) => Dispatcher.Invoke(() =>
         {
+            if (_isExiting) return;
+            _isExiting = true;
             _trayIcon.Visible = false;
             _ipcService?.Dispose();
             Shutdown();

@@ -7,6 +7,12 @@ using TaskbarGrouper.Models;
 
 namespace TaskbarGrouper.Services;
 
+public class DiscoveredAppItem
+{
+    public GroupItem Item { get; init; } = null!;
+    public string SourceBadge { get; init; } = "Pinned";
+}
+
 public static class ShortcutService
 {
     [ComImport]
@@ -126,40 +132,123 @@ public static class ShortcutService
     }
 
     /// <summary>
-    /// Scans the user's currently pinned Windows Taskbar folder for existing .lnk shortcuts.
+    /// Scans all 3 taskbar/app sources:
+    /// 1) Pinned Taskbar shortcuts (%AppData%\...\User Pinned\TaskBar)
+    /// 2) Currently open/running Taskbar windows (e.g. Steam, Epic, Discord, browsers)
+    /// 3) Desktop & Start Menu shortcuts (including Steam .url game shortcuts and Minecraft/Store apps)
     /// </summary>
-    public static List<GroupItem> ScanPinnedTaskbarShortcuts()
+    public static List<DiscoveredAppItem> ScanAllTaskbarAndSystemApps()
     {
-        var results = new List<GroupItem>();
+        var results = new List<DiscoveredAppItem>();
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddIfUnique(GroupItem? item, string badge)
+        {
+            if (item == null || string.IsNullOrWhiteSpace(item.Name) || string.IsNullOrWhiteSpace(item.TargetPath))
+                return;
+            if (item.Name.Contains("StackBar", StringComparison.OrdinalIgnoreCase) ||
+                item.TargetPath.Contains("StackBar", StringComparison.OrdinalIgnoreCase) ||
+                item.Name.Contains("Uninstall", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string key = $"{item.Name.Trim()}|{Path.GetFileName(item.TargetPath)}";
+            if (seenKeys.Add(key))
+            {
+                results.Add(new DiscoveredAppItem { Item = item, SourceBadge = badge });
+            }
+        }
+
+        // 1. Pinned Taskbar Folder (.lnk and .url)
         try
         {
             string pinnedDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
 
-            if (!Directory.Exists(pinnedDir))
-                return results;
-
-            foreach (var file in Directory.GetFiles(pinnedDir, "*.lnk"))
+            if (Directory.Exists(pinnedDir))
             {
-                try
+                foreach (var file in Directory.EnumerateFiles(pinnedDir))
                 {
-                    if (Path.GetFileName(file).Contains("StackBar", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var item = ParseShortcut(file);
-                    if (item != null)
-                        results.Add(item);
-                }
-                catch
-                {
-                    // Skip unreadable individual shortcuts without crashing
+                    if (file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ||
+                        file.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddIfUnique(ParseShortcut(file), "📌 Pinned on Taskbar");
+                    }
                 }
             }
         }
-        catch
+        catch { }
+
+        // 2. Currently Running Taskbar Applications (captures Steam, Minecraft, Discord, IDEs, etc. even if unpinned or UWP)
+        try
         {
-            // Ignore directory enumeration errors
+            foreach (var proc in Process.GetProcesses())
+            {
+                try
+                {
+                    if (proc.MainWindowHandle == IntPtr.Zero || string.IsNullOrWhiteSpace(proc.MainWindowTitle))
+                        continue;
+
+                    string? exePath = null;
+                    try
+                    {
+                        exePath = proc.MainModule?.FileName;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+                        continue;
+
+                    string exeFile = Path.GetFileName(exePath);
+                    if (exeFile.Equals("explorer.exe", StringComparison.OrdinalIgnoreCase) ||
+                        exeFile.Equals("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase) ||
+                        exeFile.Equals("TextInputHost.exe", StringComparison.OrdinalIgnoreCase) ||
+                        exeFile.Equals("SearchHost.exe", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string friendlyName = proc.MainModule?.FileVersionInfo.FileDescription ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(friendlyName))
+                        friendlyName = Path.GetFileNameWithoutExtension(exePath);
+
+                    AddIfUnique(new GroupItem
+                    {
+                        Name = friendlyName.Trim(),
+                        TargetPath = exePath,
+                        WorkingDirectory = Path.GetDirectoryName(exePath) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+                    }, "🟢 Running on Taskbar");
+                }
+                catch { }
+            }
+        }
+        catch { }
+
+        // 3. User & Public Desktop + Start Menu Programs (captures Steam .url games, Minecraft Launcher, Epic, etc.)
+        string[] extraDirs =
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
+            Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms)
+        };
+
+        foreach (var dir in extraDirs.Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d)))
+        {
+            try
+            {
+                string badge = dir.Contains("Desktop", StringComparison.OrdinalIgnoreCase) ? "🖥 Desktop" : "⊞ Start Menu";
+                foreach (var file in Directory.EnumerateFiles(dir, "*.*", SearchOption.AllDirectories))
+                {
+                    if (file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ||
+                        file.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddIfUnique(ParseShortcut(file), badge);
+                    }
+                }
+            }
+            catch { }
         }
 
         return results;
@@ -171,6 +260,34 @@ public static class ShortcutService
             return null;
 
         string name = Path.GetFileNameWithoutExtension(lnkOrFilePath);
+
+        if (lnkOrFilePath.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
+        {
+            // Parse Internet Shortcut (.url) used by Steam / Epic Games for custom icons
+            string? urlIcon = null;
+            try
+            {
+                foreach (var line in File.ReadAllLines(lnkOrFilePath))
+                {
+                    if (line.StartsWith("IconFile=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string candidate = Environment.ExpandEnvironmentVariables(line["IconFile=".Length..].Trim());
+                        if (File.Exists(candidate))
+                            urlIcon = candidate;
+                        break;
+                    }
+                }
+            }
+            catch { }
+
+            return new GroupItem
+            {
+                Name = name,
+                TargetPath = lnkOrFilePath,
+                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                CustomIconPath = urlIcon ?? lnkOrFilePath
+            };
+        }
 
         if (!lnkOrFilePath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
         {

@@ -68,8 +68,14 @@ public sealed class IpcService : IDisposable
             {
                 break;
             }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
             catch
             {
+                if (_cts.IsCancellationRequested)
+                    break;
                 await Task.Delay(100);
             }
         }
@@ -77,7 +83,13 @@ public sealed class IpcService : IDisposable
 
     public void Dispose()
     {
-        _cts.Cancel();
-        _cts.Dispose();
+        try
+        {
+            _cts.Cancel();
+        }
+        catch
+        {
+            // Ignore during shutdown
+        }
     }
 }

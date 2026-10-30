@@ -243,11 +243,11 @@ public partial class MainWindow : Window
 
         try
         {
-            var discovered = ShortcutService.ScanPinnedTaskbarShortcuts();
+            var discovered = ShortcutService.ScanAllTaskbarAndSystemApps();
             if (discovered.Count == 0)
             {
                 System.Windows.MessageBox.Show(
-                    "No pinned `.lnk` shortcuts were found in the standard Windows Quick Launch TaskBar folder.\nYou can still drag & drop any shortcuts or .exe files directly into the list!",
+                    "No shortcuts or running apps were found.\nYou can still drag & drop any shortcuts or .exe files directly into the list!",
                     "StackBar Importer", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
