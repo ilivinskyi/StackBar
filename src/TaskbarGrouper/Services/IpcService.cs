@@ -36,11 +36,12 @@ namespace TaskbarGrouper.Services
                 {
                     string userSid = WindowsIdentity.GetCurrent().User?.Value ?? "DefaultUser";
                     int sessionId = Process.GetCurrentProcess().SessionId;
+                    string modeTag = AppInfo.IsPortableMode ? "Port" : "Inst";
                     using (var sha = System.Security.Cryptography.SHA1.Create())
                     {
                         byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(userSid));
                         string hex = BitConverter.ToString(hash).Replace("-", "").Substring(0, 8);
-                        _pipeName = $"StackBar_{sessionId}_{hex}";
+                        _pipeName = $"StackBar_{modeTag}_{sessionId}_{hex}";
                     }
                 }
                 return _pipeName;

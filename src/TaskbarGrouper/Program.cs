@@ -76,7 +76,8 @@ namespace TaskbarGrouper
 
             // Check single instance mutex for the resident tray runner
             string userSid = WindowsIdentity.GetCurrent().User?.Value ?? "User";
-            string mutexName = $"Local\\StackBar.Resident.{userSid}";
+            string modePrefix = AppInfo.IsPortableMode ? "Portable" : "Installed";
+            string mutexName = $"Local\\StackBar.{modePrefix}.{userSid}";
             bool createdNew;
             _instanceMutex = new Mutex(true, mutexName, out createdNew);
 

@@ -69,6 +69,12 @@ namespace TaskbarGrouper.Views
 
             _suppressEvents = true;
             RunAtStartupCheck.IsChecked = StartupService.IsRunAtStartupEnabled();
+            if (AppInfo.IsPortableMode)
+            {
+                ModeBadgeText.Text = "Portable Edition v1.1";
+                RunAtStartupCheck.IsEnabled = false;
+                RunAtStartupCheck.ToolTip = "Windows startup registration is disabled in Portable Mode.";
+            }
             _suppressEvents = false;
 
             RefreshGroupsList();

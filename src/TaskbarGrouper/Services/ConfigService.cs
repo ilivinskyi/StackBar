@@ -16,21 +16,34 @@ namespace TaskbarGrouper.Services
 
         public ConfigService()
         {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            _dir = Path.Combine(appData, "StackBar");
+            if (AppInfo.IsPortableMode)
+            {
+                // Portable Mode: store everything in ./data right next to the exe!
+                _dir = Path.Combine(AppInfo.BaseDirectory, "data");
+            }
+            else
+            {
+                var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                _dir = Path.Combine(appData, "StackBar");
+            }
+
             Directory.CreateDirectory(_dir);
             _configPath = Path.Combine(_dir, "groups.json");
             _backupPath = Path.Combine(_dir, "groups.json.bak");
 
-            // Migration from TaskbarGrouper legacy folder if exists
-            var oldPath = Path.Combine(appData, "TaskbarGrouper", "groups.json");
-            if (!File.Exists(_configPath) && File.Exists(oldPath))
+            // Migration from TaskbarGrouper legacy folder if exists (only in installed mode)
+            if (!AppInfo.IsPortableMode)
             {
-                try
+                var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                var oldPath = Path.Combine(appData, "TaskbarGrouper", "groups.json");
+                if (!File.Exists(_configPath) && File.Exists(oldPath))
                 {
-                    File.Copy(oldPath, _configPath, true);
+                    try
+                    {
+                        File.Copy(oldPath, _configPath, true);
+                    }
+                    catch { }
                 }
-                catch { }
             }
         }
 

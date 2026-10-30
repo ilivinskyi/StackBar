@@ -124,7 +124,7 @@
                     <Image Source="pack://application:,,,/Assets/app_icon.png" Width="32" Height="32" Margin="0,0,10,0" RenderOptions.BitmapScalingMode="HighQuality"/>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="StackBar" FontSize="16" FontWeight="Bold" Foreground="White"/>
-                        <TextBlock Text="Taskbar Folder Studio v1.1" FontSize="10.5" Foreground="#88FFFFFF"/>
+                        <TextBlock x:Name="ModeBadgeText" Text="Taskbar Folder Studio v1.1" FontSize="10.5" Foreground="#88FFFFFF"/>
                     </StackPanel>
                 </DockPanel>
 
