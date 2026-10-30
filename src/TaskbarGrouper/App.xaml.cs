@@ -110,10 +110,23 @@ public partial class App : System.Windows.Application
 
     private void InitializeTrayIcon()
     {
+        Icon trayIco = SystemIcons.Application;
+        try
+        {
+            var exePath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                var extracted = Icon.ExtractAssociatedIcon(exePath);
+                if (extracted != null)
+                    trayIco = extracted;
+            }
+        }
+        catch { }
+
         _trayIcon = new System.Windows.Forms.NotifyIcon
         {
             Text = "StackBar — Instant Taskbar Folders",
-            Icon = SystemIcons.Application,
+            Icon = trayIco,
             Visible = true
         };
 

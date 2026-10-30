@@ -9,6 +9,12 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>StackBar</AssemblyName>
     <RootNamespace>TaskbarGrouper</RootNamespace>
+    <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\app_icon.png" />
+    <Resource Include="Assets\app_icon.ico" />
+  </ItemGroup>
 
 </Project>

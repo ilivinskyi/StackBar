@@ -7,6 +7,7 @@
         MinWidth="860"
         MinHeight="540"
         WindowStartupLocation="CenterScreen"
+        Icon="pack://application:,,,/Assets/app_icon.ico"
         Background="#12131A"
         Foreground="White"
         Loaded="Window_Loaded">
@@ -126,9 +127,7 @@
             <DockPanel>
                 <!-- Brand Header -->
                 <DockPanel DockPanel.Dock="Top" Margin="4,2,4,14">
-                    <Border Width="28" Height="28" CornerRadius="8" Background="#3A6DF0" Margin="0,0,10,0">
-                        <TextBlock Text="❖" FontSize="15" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
+                    <Image Source="pack://application:,,,/Assets/app_icon.png" Width="32" Height="32" Margin="0,0,10,0" RenderOptions.BitmapScalingMode="HighQuality"/>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="StackBar" FontSize="16" FontWeight="Bold" Foreground="White"/>
                         <TextBlock Text="Taskbar Folder Studio" FontSize="10.5" Foreground="#88FFFFFF"/>
