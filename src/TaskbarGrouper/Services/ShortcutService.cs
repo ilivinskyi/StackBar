@@ -25,8 +25,7 @@ namespace TaskbarGrouper.Services
         [Guid("000214F9-0000-0000-C000-000000000046")]
         private interface IShellLinkW
         {
-            [PreserveSig]
-            int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, IntPtr pfd, uint fFlags);
+            [PreserveSig] int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, IntPtr pfd, uint fFlags);
             [PreserveSig] int GetIDList(out IntPtr ppidl);
             [PreserveSig] int SetIDList(IntPtr pidl);
             [PreserveSig] int GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cchMaxName);
@@ -158,7 +157,6 @@ namespace TaskbarGrouper.Services
 
                             if (args.IndexOf("--group", StringComparison.OrdinalIgnoreCase) >= 0)
                             {
-                                // Find matching group
                                 foreach (var group in config.Groups)
                                 {
                                     if (args.IndexOf(group.Id, StringComparison.OrdinalIgnoreCase) >= 0)
@@ -184,15 +182,112 @@ namespace TaskbarGrouper.Services
             catch { }
         }
 
+        /// <summary>
+        /// Automatically migrates any legacy items pointing to User Pinned\TaskBar so unpinning won't break them!
+        /// </summary>
+        public static void MigrateLegacyPinnedTargets(AppConfig config, string appDataDir)
+        {
+            string pinnedDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
+
+            string linksDir = Path.Combine(appDataDir, "Links");
+            Directory.CreateDirectory(linksDir);
+
+            bool modified = false;
+            foreach (var group in config.Groups)
+            {
+                foreach (var item in group.Items)
+                {
+                    if (item.TargetPath.StartsWith(pinnedDir, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (File.Exists(item.TargetPath))
+                        {
+                            string ext = Path.GetExtension(item.TargetPath);
+                            string safeId = Guid.NewGuid().ToString("N").Substring(0, 8);
+                            string safeName = string.Join("_", item.Name.Split(Path.GetInvalidFileNameChars())).Trim();
+                            string persistentLnk = Path.Combine(linksDir, $"{safeId}_{safeName}{ext}");
+                            try
+                            {
+                                File.Copy(item.TargetPath, persistentLnk, true);
+                                item.TargetPath = persistentLnk;
+                                if (!string.IsNullOrEmpty(item.CustomIconPath) && item.CustomIconPath.StartsWith(pinnedDir, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    item.CustomIconPath = persistentLnk;
+                                }
+                                modified = true;
+                            }
+                            catch { }
+                        }
+                        else
+                        {
+                            // Target shortcut was already deleted from Windows pinned folder!
+                            // Try to re-resolve from Start Menu or ProgramFiles by App name
+                            var recovered = TryRecoverDeletedApp(item.Name);
+                            if (recovered != null)
+                            {
+                                item.TargetPath = recovered.TargetPath;
+                                item.WorkingDirectory = recovered.WorkingDirectory;
+                                item.CustomIconPath = recovered.CustomIconPath;
+                                item.Kind = recovered.Kind;
+                                modified = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (modified)
+            {
+                new ConfigService().Save(config);
+            }
+        }
+
+        private static GroupItem? TryRecoverDeletedApp(string appName)
+        {
+            var all = ScanAllTaskbarAndSystemApps();
+            foreach (var a in all)
+            {
+                if (a.Item.Name.Equals(appName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return a.Item;
+                }
+            }
+            return null;
+        }
+
         public static GroupItem ImportAndPersistShortcut(string sourceFile, string appDataDir)
         {
+            // If it's a Directory/Folder
+            if (Directory.Exists(sourceFile))
+            {
+                return new GroupItem
+                {
+                    Name = new DirectoryInfo(sourceFile).Name,
+                    TargetPath = sourceFile,
+                    WorkingDirectory = sourceFile,
+                    Kind = ItemKind.Folder
+                };
+            }
+
             string linksDir = Path.Combine(appDataDir, "Links");
             Directory.CreateDirectory(linksDir);
 
             string name = Path.GetFileNameWithoutExtension(sourceFile);
             string ext = Path.GetExtension(sourceFile);
 
-            // If it's a file (.exe, etc) not a shortcut, keep target path directly
+            // Shell App URI (shell:AppsFolder\...)
+            if (sourceFile.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase))
+            {
+                return new GroupItem
+                {
+                    Name = name,
+                    TargetPath = sourceFile,
+                    Kind = ItemKind.ShellApp
+                };
+            }
+
+            // If it's an executable or file, reference directly
             if (!ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase) &&
                 !ext.Equals(".url", StringComparison.OrdinalIgnoreCase))
             {
@@ -225,6 +320,17 @@ namespace TaskbarGrouper.Services
         public static GroupItem ParseShortcut(string lnkOrFilePath)
         {
             string name = Path.GetFileNameWithoutExtension(lnkOrFilePath);
+
+            if (Directory.Exists(lnkOrFilePath))
+            {
+                return new GroupItem
+                {
+                    Name = new DirectoryInfo(lnkOrFilePath).Name,
+                    TargetPath = lnkOrFilePath,
+                    WorkingDirectory = lnkOrFilePath,
+                    Kind = ItemKind.Folder
+                };
+            }
 
             if (lnkOrFilePath.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase))
             {
@@ -324,7 +430,7 @@ namespace TaskbarGrouper.Services
                     item.Name.IndexOf("Uninstall", StringComparison.OrdinalIgnoreCase) >= 0)
                     return;
 
-                string key = $"{item.Name.Trim()}|{Path.GetFileName(item.TargetPath)}";
+                string key = $"{item.Name.Trim()}|{item.TargetPath}";
                 if (seenKeys.Add(key))
                 {
                     results.Add(new DiscoveredAppItem { Item = item, SourceBadge = badge });
@@ -352,7 +458,7 @@ namespace TaskbarGrouper.Services
             }
             catch { }
 
-            // 2. shell:AppsFolder via Shell.Application COM (Captures Start menu & Store/UWP apps like Minecraft, Calculator)
+            // 2. shell:AppsFolder via Shell.Application COM (Captures Start Menu apps & Store/UWP like Minecraft Launcher)
             try
             {
                 Type? shellAppType = Type.GetTypeFromProgID("Shell.Application");
@@ -389,7 +495,27 @@ namespace TaskbarGrouper.Services
             }
             catch { }
 
-            // 3. Desktop Shortcuts (Steam games, etc)
+            // 3. Start Menu Programs folders (.lnk recursive)
+            string[] startDirs =
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms),
+                Environment.GetFolderPath(Environment.SpecialFolder.Programs)
+            };
+
+            foreach (var dir in startDirs)
+            {
+                if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
+                try
+                {
+                    foreach (var file in Directory.GetFiles(dir, "*.lnk", SearchOption.AllDirectories))
+                    {
+                        AddIfUnique(ParseShortcut(file), "⊞ Start Menu");
+                    }
+                }
+                catch { }
+            }
+
+            // 4. Desktop Shortcuts (Steam games, etc.)
             string[] desktopDirs =
             {
                 Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),

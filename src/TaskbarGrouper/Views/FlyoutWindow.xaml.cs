@@ -51,16 +51,25 @@ namespace TaskbarGrouper.Views
 
             ApplyAccentTheme(_group.AccentColorHex);
 
-            if (_group.Items.Count == 0)
+            PopulateViewModels(_group.Items);
+        }
+
+        private void PopulateViewModels(List<TaskbarGrouper.Models.GroupItem> items)
+        {
+            _viewModels.Clear();
+            if (items == null || items.Count == 0)
             {
                 EmptyNotice.Visibility = Visibility.Visible;
             }
             else
             {
-                for (int idx = 0; idx < _group.Items.Count; idx++)
+                EmptyNotice.Visibility = Visibility.Collapsed;
+                for (int idx = 0; idx < items.Count; idx++)
                 {
-                    var item = _group.Items[idx];
+                    var item = items[idx];
                     bool isShell = item.Kind == ItemKind.ShellApp;
+                    bool isFolder = item.Kind == ItemKind.Folder || Directory.Exists(item.TargetPath);
+
                     _viewModels.Add(new FlyoutItemViewModel
                     {
                         Name = item.Name,
@@ -68,7 +77,7 @@ namespace TaskbarGrouper.Views
                         HotkeyHint = idx < 9 ? $"{idx + 1}" : string.Empty,
                         TileHeight = _group.ShowLabels ? 82 : 62,
                         LabelVisibility = _group.ShowLabels ? Visibility.Visible : Visibility.Collapsed,
-                        AdminOptionVisibility = isShell ? Visibility.Collapsed : Visibility.Visible,
+                        AdminOptionVisibility = (isShell || isFolder) ? Visibility.Collapsed : Visibility.Visible,
                         FileLocationVisibility = isShell ? Visibility.Collapsed : Visibility.Visible,
                         Item = item,
                         Icon = IconHelper.ExtractIcon(item.TargetPath, item.CustomIconPath)
@@ -76,6 +85,7 @@ namespace TaskbarGrouper.Views
                 }
             }
 
+            ItemsGrid.ItemsSource = null;
             ItemsGrid.ItemsSource = _viewModels;
         }
 
@@ -162,7 +172,6 @@ namespace TaskbarGrouper.Views
 
             if (index >= 0 && index < _viewModels.Count)
             {
-                // Windows standard: Ctrl + Shift to run as administrator
                 bool asAdmin = (Keyboard.Modifiers & ModifierKeys.Control) != 0 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
                 LaunchItem(_viewModels[index], asAdmin);
             }
@@ -200,9 +209,15 @@ namespace TaskbarGrouper.Views
             if (sender is MenuItem mi && mi.CommandParameter is FlyoutItemViewModel vm)
             {
                 string target = vm.Item.TargetPath;
+                if (Directory.Exists(target))
+                {
+                    Process.Start("explorer.exe", $"\"{target}\"");
+                    Close();
+                    return;
+                }
+
                 if (target.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Resolve actual destination for Open File Location
                     string? realTarget = ShortcutService.ParseShortcut(target).TargetPath;
                     if (!string.IsNullOrEmpty(realTarget) && File.Exists(realTarget))
                         target = realTarget;
@@ -220,6 +235,14 @@ namespace TaskbarGrouper.Views
         {
             try
             {
+                // Custom Folder drill-down feature!
+                if (vm.Item.Kind == ItemKind.Folder || Directory.Exists(vm.Item.TargetPath))
+                {
+                    // Drill in: Show contents of this directory right inside the flyout
+                    DisplaySubdirectoryContents(vm.Item.TargetPath);
+                    return;
+                }
+
                 // Shell Apps (Store/UWP)
                 if (vm.Item.Kind == ItemKind.ShellApp || vm.Item.TargetPath.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase))
                 {
@@ -258,6 +281,46 @@ namespace TaskbarGrouper.Views
 
             if (_group.CloseOnLaunch)
                 Close();
+        }
+
+        private void DisplaySubdirectoryContents(string folderPath)
+        {
+            try
+            {
+                GroupTitleText.Text = $"📁  {Path.GetFileName(folderPath.TrimEnd('\\'))}";
+                var subItems = new List<TaskbarGrouper.Models.GroupItem>();
+
+                // Add subdirectories
+                foreach (var d in Directory.GetDirectories(folderPath))
+                {
+                    var di = new DirectoryInfo(d);
+                    if ((di.Attributes & FileAttributes.Hidden) != 0) continue;
+                    subItems.Add(new TaskbarGrouper.Models.GroupItem
+                    {
+                        Name = di.Name,
+                        TargetPath = d,
+                        WorkingDirectory = d,
+                        Kind = ItemKind.Folder
+                    });
+                }
+
+                // Add files
+                foreach (var f in Directory.GetFiles(folderPath))
+                {
+                    var fi = new FileInfo(f);
+                    if ((fi.Attributes & FileAttributes.Hidden) != 0) continue;
+                    subItems.Add(ShortcutService.ParseShortcut(f));
+                }
+
+                ItemCountBadge.Text = $"{subItems.Count}";
+                PopulateViewModels(subItems);
+            }
+            catch
+            {
+                // Fallback to opening folder in Windows Explorer
+                Process.Start("explorer.exe", $"\"{folderPath}\"");
+                Close();
+            }
         }
     }
 }

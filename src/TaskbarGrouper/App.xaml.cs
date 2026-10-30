@@ -58,6 +58,9 @@ namespace TaskbarGrouper
             // Auto-heal pinned taskbar shortcuts if exe path changed
             ShortcutService.HealPinnedTaskbarShortcuts(config, _configService.AppDataDirectory);
 
+            // Auto-migrate any existing pinned links so unpinning won't break them!
+            ShortcutService.MigrateLegacyPinnedTargets(config, _configService.AppDataDirectory);
+
             // Fast path (cold start fallback when no tray resident was running)
             if (!string.IsNullOrEmpty(groupId))
             {

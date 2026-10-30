@@ -46,6 +46,10 @@ namespace TaskbarGrouper.Views
         private bool _suppressEvents;
         private readonly DispatcherTimer _debounceTimer;
 
+        // Custom drag & drop reorder state
+        private Point _dragStartPoint;
+        private bool _isDraggingItem;
+
         public MainWindow(AppConfig config, ConfigService configService)
         {
             InitializeComponent();
@@ -70,6 +74,35 @@ namespace TaskbarGrouper.Views
             RefreshGroupsList();
             if (_config.Groups.Count > 0)
                 GroupsListBox.SelectedIndex = 0;
+
+            // Enable custom internal drag-and-drop reordering on ItemsListBox
+            ItemsListBox.PreviewMouseLeftButtonDown += ItemsListBox_PreviewMouseLeftButtonDown;
+            ItemsListBox.PreviewMouseMove += ItemsListBox_PreviewMouseMove;
+        }
+
+        private void ItemsListBox_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            _dragStartPoint = e.GetPosition(null);
+            _isDraggingItem = false;
+        }
+
+        private void ItemsListBox_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed && !_isDraggingItem)
+            {
+                Point pos = e.GetPosition(null);
+                if (Math.Abs(pos.X - _dragStartPoint.X) > SystemParameters.MinimumHorizontalDragDistance ||
+                    Math.Abs(pos.Y - _dragStartPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
+                {
+                    if (ItemsListBox.SelectedItem is ManagerItemRowViewModel row)
+                    {
+                        _isDraggingItem = true;
+                        var data = new DataObject("StackBar.ReorderItem", row);
+                        DragDrop.DoDragDrop(ItemsListBox, data, DragDropEffects.Move);
+                        _isDraggingItem = false;
+                    }
+                }
+            }
         }
 
         private void RefreshGroupsList()
@@ -104,7 +137,6 @@ namespace TaskbarGrouper.Views
 
             ShowLabelsCheck.IsChecked = _selectedGroup.ShowLabels;
 
-            // Accent radio
             string hex = _selectedGroup.AccentColorHex ?? "#3A6DF0";
             if (hex.Equals("#8B5CF6", StringComparison.OrdinalIgnoreCase)) ColorPurple.IsChecked = true;
             else if (hex.Equals("#10B981", StringComparison.OrdinalIgnoreCase)) ColorEmerald.IsChecked = true;
@@ -252,7 +284,6 @@ namespace TaskbarGrouper.Views
             {
                 foreach (var item in dialog.SelectedItems)
                 {
-                    // Copy shortcut to persistent folder
                     var persistent = ShortcutService.ImportAndPersistShortcut(item.TargetPath, _configService.AppDataDirectory);
                     if (!_selectedGroup.Items.Any(existing => existing.TargetPath.Equals(persistent.TargetPath, StringComparison.OrdinalIgnoreCase)))
                     {
@@ -272,8 +303,8 @@ namespace TaskbarGrouper.Views
 
             var ofd = new Microsoft.Win32.OpenFileDialog
             {
-                Title = "Select Applications or Shortcuts to Add",
-                Filter = "Apps & Shortcuts (*.exe;*.lnk;*.url;*.bat)|*.exe;*.lnk;*.url;*.bat|All Files (*.*)|*.*",
+                Title = "Select Applications, Shortcuts, or Files to Add",
+                Filter = "All Files & Apps (*.*)|*.*",
                 Multiselect = true
             };
 
@@ -333,6 +364,32 @@ namespace TaskbarGrouper.Views
         private void ItemsListBox_Drop(object sender, DragEventArgs e)
         {
             if (_selectedGroup == null) return;
+
+            // 1. Internal Drag & Drop Reordering
+            if (e.Data.GetDataPresent("StackBar.ReorderItem"))
+            {
+                var dragged = e.Data.GetData("StackBar.ReorderItem") as ManagerItemRowViewModel;
+                if (dragged != null)
+                {
+                    // Target drop position
+                    var targetItem = GetItemUnderMouse(e.GetPosition(ItemsListBox));
+                    if (targetItem != null && targetItem != dragged)
+                    {
+                        int oldIdx = _selectedGroup.Items.IndexOf(dragged.Model);
+                        int newIdx = _selectedGroup.Items.IndexOf(targetItem.Model);
+                        if (oldIdx >= 0 && newIdx >= 0)
+                        {
+                            _selectedGroup.Items.RemoveAt(oldIdx);
+                            _selectedGroup.Items.Insert(newIdx, dragged.Model);
+                            _configService.Save(_config);
+                            RefreshItemsList();
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // 2. Windows Explorer Drag & Drop of Files, Shortcuts, or Folders
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
                 var files = e.Data.GetData(DataFormats.FileDrop) as string[];
@@ -353,6 +410,23 @@ namespace TaskbarGrouper.Views
                 RefreshGroupsList();
                 StatusText.Text = $"Added {count} item(s) to '{_selectedGroup.Name}'.";
             }
+        }
+
+        private ManagerItemRowViewModel? GetItemUnderMouse(Point p)
+        {
+            HitTestResult result = VisualTreeHelper.HitTest(ItemsListBox, p);
+            if (result == null) return null;
+
+            DependencyObject current = result.VisualHit;
+            while (current != null && current != ItemsListBox)
+            {
+                if (current is ListBoxItem item && item.DataContext is ManagerItemRowViewModel vm)
+                {
+                    return vm;
+                }
+                current = VisualTreeHelper.GetParent(current);
+            }
+            return null;
         }
     }
 }
