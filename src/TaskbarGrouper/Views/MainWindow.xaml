@@ -1,7 +1,8 @@
 <Window x:Class="TaskbarGrouper.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="StackBar — Taskbar Folder Studio"
+        xmlns:v="clr-namespace:TaskbarGrouper.Views"
+        Title="StackBar - Taskbar Folder Studio"
         Width="980"
         Height="640"
         MinWidth="860"
@@ -199,7 +200,10 @@
                                     <Image x:Name="LiveFolderIconPreview" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                                 </Border>
                                 <StackPanel VerticalAlignment="Center">
-                                    <TextBlock x:Name="SelectedGroupHeader" Text="Select a Stack" FontSize="20" FontWeight="Bold" Foreground="White"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <v:EmojiView x:Name="SelectedGroupGlyph" EmojiSize="22" Margin="0,0,8,0" Visibility="Collapsed"/>
+                                        <TextBlock x:Name="SelectedGroupHeader" Text="Select a Stack" FontSize="20" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+                                    </StackPanel>
                                     <TextBlock x:Name="SelectedGroupSubtext" Text="Customize folder appearance and apps below" FontSize="11.5" Foreground="#88FFFFFF" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </StackPanel>
@@ -216,7 +220,7 @@
                                 <TextBlock Text="Emoji:" Foreground="#AAFFFFFF" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
                                 <Button x:Name="EmojiPickerBtn" Click="EmojiPickerBtn_Click" Style="{StaticResource SurfaceBtn}" Padding="8,4" Cursor="Hand" ToolTip="Click to select folder emoji">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock x:Name="SelectedEmojiDisplay" Text="📁" FontSize="15" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                        <v:EmojiView x:Name="SelectedEmojiDisplay" Text="📁" EmojiSize="17" Margin="0,0,5,0"/>
                                         <TextBlock Text="▾" FontSize="9" Foreground="#88FFFFFF" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
@@ -304,17 +308,17 @@
                                 <DockPanel x:Name="EmojiPresetsBar" Visibility="Collapsed">
                                     <TextBlock Text="Quick Presets:" Foreground="#88FFFFFF" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0" DockPanel.Dock="Left"/>
                                     <WrapPanel VerticalAlignment="Center">
-                                        <Button Content="🎮" Tag="🎮" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Gaming"/>
-                                        <Button Content="💻" Tag="💻" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Development / Code"/>
-                                        <Button Content="🌐" Tag="🌐" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Web &amp; Browsers"/>
-                                        <Button Content="💬" Tag="💬" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Chat &amp; Social"/>
-                                        <Button Content="🎵" Tag="🎵" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Music &amp; Audio"/>
-                                        <Button Content="🎨" Tag="🎨" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Design &amp; Creative"/>
-                                        <Button Content="🛠️" Tag="🛠️" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Utilities &amp; Tools"/>
-                                        <Button Content="📁" Tag="📁" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Documents &amp; Work"/>
-                                        <Button Content="🤖" Tag="🤖" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="AI &amp; Assistants"/>
-                                        <Button Content="🚀" Tag="🚀" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Launch &amp; Favorites"/>
-                                        <Button Content="⭐" Tag="⭐" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Star / Featured"/>
+                                        <Button Tag="🎮" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Gaming"><v:EmojiView Text="🎮" EmojiSize="16"/></Button>
+                                        <Button Tag="💻" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Development / Code"><v:EmojiView Text="💻" EmojiSize="16"/></Button>
+                                        <Button Tag="🌐" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Web &amp; Browsers"><v:EmojiView Text="🌐" EmojiSize="16"/></Button>
+                                        <Button Tag="💬" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Chat &amp; Social"><v:EmojiView Text="💬" EmojiSize="16"/></Button>
+                                        <Button Tag="🎵" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Music &amp; Audio"><v:EmojiView Text="🎵" EmojiSize="16"/></Button>
+                                        <Button Tag="🎨" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Design &amp; Creative"><v:EmojiView Text="🎨" EmojiSize="16"/></Button>
+                                        <Button Tag="🛠️" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Utilities &amp; Tools"><v:EmojiView Text="🛠️" EmojiSize="16"/></Button>
+                                        <Button Tag="📁" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Documents &amp; Work"><v:EmojiView Text="📁" EmojiSize="16"/></Button>
+                                        <Button Tag="🤖" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="AI &amp; Assistants"><v:EmojiView Text="🤖" EmojiSize="16"/></Button>
+                                        <Button Tag="🚀" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Launch &amp; Favorites"><v:EmojiView Text="🚀" EmojiSize="16"/></Button>
+                                        <Button Tag="⭐" Click="EmojiPreset_Click" Style="{StaticResource SurfaceBtn}" Width="28" Height="26" Padding="0" Margin="2,0" ToolTip="Star / Featured"><v:EmojiView Text="⭐" EmojiSize="16"/></Button>
                                     </WrapPanel>
                                 </DockPanel>
 

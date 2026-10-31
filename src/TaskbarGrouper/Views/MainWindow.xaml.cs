@@ -71,6 +71,15 @@ namespace TaskbarGrouper.Views
                 FlushPendingSave();
                 _configService.GroupChanged -= OnGroupChangedElsewhere;
             };
+            // Otherwise an open picker stays up until a click outside, and that click (even on the close
+            // button) only dismisses it
+            PreviewKeyDown += (s, e) =>
+            {
+                if (e.Key != Key.Escape || !(EmojiPickerPopup.IsOpen || AccentPickerPopup.IsOpen)) return;
+                EmojiPickerPopup.IsOpen = false;
+                AccentPickerPopup.IsOpen = false;
+                e.Handled = true;
+            };
 
             InitializeEmojiPalette();
             InitializeAccentPalette();
@@ -234,7 +243,9 @@ namespace TaskbarGrouper.Views
         {
             if (_selectedGroup == null) return;
             LiveFolderIconPreview.Source = IconHelper.GenerateGroupPreviewImage(_selectedGroup);
-            SelectedGroupHeader.Text = $"{_selectedGroup.IconGlyph}  {_selectedGroup.Name}";
+            SelectedGroupGlyph.Text = _selectedGroup.IconGlyph;
+            SelectedGroupGlyph.Visibility = string.IsNullOrWhiteSpace(_selectedGroup.IconGlyph) ? Visibility.Collapsed : Visibility.Visible;
+            SelectedGroupHeader.Text = _selectedGroup.Name;
             string modeDesc = _selectedGroup.IconMode switch
             {
                 FolderIconMode.CustomIco => "Custom Cover Icon",
@@ -296,7 +307,7 @@ namespace TaskbarGrouper.Views
             {
                 var btn = new Button
                 {
-                    Content = emoji,
+                    Content = new EmojiView { Text = emoji, EmojiSize = 18 },
                     Tag = emoji,
                     Style = (Style)FindResource("SurfaceBtn"),
                     Width = 30,

@@ -337,7 +337,7 @@ namespace TaskbarGrouper
 
             _trayIcon = new System.Windows.Forms.NotifyIcon
             {
-                Text = "StackBar — Taskbar Folders",
+                Text = "StackBar - Taskbar Folders",
                 Icon = trayIco,
                 Visible = true
             };
@@ -346,6 +346,7 @@ namespace TaskbarGrouper
             menu.Items.Add("Open StackBar Studio", null, (_, __) => ShowManagerWindow(null));
             menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
             menu.Items.Add("Exit StackBar", null, (_, __) => ExitApplication());
+            Views.DarkTrayMenuRenderer.Apply(menu);
 
             _trayIcon.ContextMenuStrip = menu;
             _trayIcon.DoubleClick += (_, __) => ShowManagerWindow(null);
