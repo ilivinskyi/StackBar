@@ -304,6 +304,10 @@ namespace TaskbarGrouper.Views
         {
             if (hwnd == IntPtr.Zero || NativePositioningService.IsForegroundWindow(hwnd)) return;
 
+            // Clears the "pressed since last call" state left by the click that opened the flyout, which the
+            // first poll would otherwise report as an outside click
+            NativePositioningService.IsMouseButtonDown();
+
             _outsideClickTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
             _outsideClickTimer.Tick += (s, e) =>
             {

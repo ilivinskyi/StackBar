@@ -149,10 +149,15 @@ namespace TaskbarGrouper.Services
 
         public static bool IsForegroundWindow(IntPtr hwnd) => GetForegroundWindow() == hwnd;
 
+        // Cached: the outside-click fallback asks on every poll while a button is held
+        private static readonly uint CurrentProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+
         /// <summary>Left, right or middle mouse button currently held down (anywhere on screen).</summary>
         public static bool IsMouseButtonDown()
         {
-            return (GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0 || (GetAsyncKeyState(0x04) & 0x8000) != 0;
+            // 0x8000: held now; 0x0001: pressed since the previous call, which catches a click that started and
+            // ended between two polls of the fallback timer
+            return (GetAsyncKeyState(0x01) & 0x8001) != 0 || (GetAsyncKeyState(0x02) & 0x8001) != 0 || (GetAsyncKeyState(0x04) & 0x8001) != 0;
         }
 
         [DllImport("user32.dll")]
@@ -167,7 +172,7 @@ namespace TaskbarGrouper.Services
             IntPtr hwnd = WindowFromPoint(pt);
             if (hwnd == IntPtr.Zero) return false;
             GetWindowThreadProcessId(hwnd, out uint pid);
-            return pid == (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+            return pid == CurrentProcessId;
         }
 
         public static bool IsCursorOverTaskbar()

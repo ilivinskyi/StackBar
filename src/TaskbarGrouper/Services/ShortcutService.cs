@@ -510,13 +510,17 @@ namespace TaskbarGrouper.Services
                         try
                         {
                             ((IPersistFile)link).Load(file, 0);
-                            var ownership = ClassifyLoadedPin(link, appDataDir, out var groupId);
-                            if (ownership == PinOwnership.NotOurs) continue;
 
+                            // Record the icon of every pin before deciding ownership: another StackBar copy sharing
+                            // this data folder (e.g. a dev build next to the installed one) may point its pin at an
+                            // icon file here, and the cleanup below must not delete it
                             var iconSb = new StringBuilder(1024);
                             link.GetIconLocation(iconSb, iconSb.Capacity, out _);
                             string currentIcon = Environment.ExpandEnvironmentVariables(iconSb.ToString());
                             iconsInUse.Add(currentIcon);
+
+                            var ownership = ClassifyLoadedPin(link, appDataDir, out var groupId);
+                            if (ownership == PinOwnership.NotOurs) continue;
 
                             var group = groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
                             if (group == null) continue;
