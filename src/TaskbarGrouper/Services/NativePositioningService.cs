@@ -129,6 +129,33 @@ namespace TaskbarGrouper.Services
             return best;
         }
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int maxCount);
+
+        internal static bool IsTaskbarClassName(string className) =>
+            className == "Shell_TrayWnd" || className == "Shell_SecondaryTrayWnd";
+
+        /// <summary>True if the taskbar has just taken the foreground (the user clicked on it).</summary>
+        public static bool IsTaskbarInForeground()
+        {
+            try
+            {
+                IntPtr root = GetAncestor(GetForegroundWindow(), 2 /* GA_ROOT */);
+                var name = new System.Text.StringBuilder(64);
+                return root != IntPtr.Zero && GetClassName(root, name, name.Capacity) > 0 && IsTaskbarClassName(name.ToString());
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         /// <summary>Which screen edge a taskbar rectangle sits on (a wide bar is top/bottom, a tall one left/right).</summary>
         internal static TaskbarEdge ClassifyEdge(System.Drawing.Rectangle taskbar, System.Drawing.Rectangle monitorBounds)
         {

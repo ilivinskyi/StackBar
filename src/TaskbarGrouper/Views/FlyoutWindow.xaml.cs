@@ -27,8 +27,20 @@ namespace TaskbarGrouper.Views
         public string HotkeyHint { get; set; } = string.Empty;
         public double TileHeight { get; set; } = 82;
         public Visibility LabelVisibility { get; set; } = Visibility.Visible;
-        public Visibility AdminOptionVisibility { get; set; } = Visibility.Visible;
-        public Visibility FileLocationVisibility { get; set; } = Visibility.Visible;
+        // Worked out when the context menu opens (each needs a shortcut read): see ItemButton_ContextMenuOpening
+        private Visibility _adminOptionVisibility = Visibility.Collapsed;
+        public Visibility AdminOptionVisibility
+        {
+            get => _adminOptionVisibility;
+            set { if (_adminOptionVisibility != value) { _adminOptionVisibility = value; OnPropertyChanged(nameof(AdminOptionVisibility)); } }
+        }
+
+        private Visibility _fileLocationVisibility = Visibility.Collapsed;
+        public Visibility FileLocationVisibility
+        {
+            get => _fileLocationVisibility;
+            set { if (_fileLocationVisibility != value) { _fileLocationVisibility = value; OnPropertyChanged(nameof(FileLocationVisibility)); } }
+        }
         public TaskbarGrouper.Models.GroupItem Item { get; set; } = null!;
         public ImageSource? Icon { get; set; }
 
@@ -152,6 +164,9 @@ namespace TaskbarGrouper.Views
 
         public int Columns => Polyfills.Clamp(_group.Columns, 2, 8);
 
+        /// <summary>The flyout lost focus to the taskbar (e.g. its pin was clicked again).</summary>
+        public bool ClosedByTaskbarClick { get; private set; }
+
         public FlyoutWindow(AppGroup group, AppConfig config, ConfigService configService,
             int? cursorX = null, int? cursorY = null, Action<string>? onEditRequested = null)
         {
@@ -191,10 +206,6 @@ namespace TaskbarGrouper.Views
                     HotkeyHint = idx < 9 ? $"{idx + 1}" : string.Empty,
                     TileHeight = _group.ShowLabels ? 82 : 62,
                     LabelVisibility = _group.ShowLabels ? Visibility.Visible : Visibility.Collapsed,
-                    AdminOptionVisibility = LaunchRules.CanRunAsAdmin(item, ShortcutRepairService.ResolveLinkTarget) ? Visibility.Visible : Visibility.Collapsed,
-                    FileLocationVisibility = LaunchRules.FileLocationTarget(item, _configService.AppDataDirectory, ShortcutRepairService.ResolveLinkTarget) != null
-                        ? Visibility.Visible
-                        : Visibility.Collapsed,
                     Item = item,
                     Icon = IconHelper.ExtractIcon(item),
                     IsJiggling = _isJiggleMode
@@ -304,7 +315,11 @@ namespace TaskbarGrouper.Views
         private void Window_Deactivated(object? sender, EventArgs e)
         {
             if (!_isClosing && IsVisible && _modalDepth == 0 && _dragVm == null)
+            {
+                // Remember whether a taskbar click closed us: only then may the following OPEN be a click-to-close
+                ClosedByTaskbarClick = NativePositioningService.IsTaskbarInForeground();
                 Close();
+            }
         }
 
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -754,6 +769,19 @@ namespace TaskbarGrouper.Views
             }
         }
 
+        /// <summary>
+        /// Decides the menu entries only when the menu is about to open: each check may read a shortcut and
+        /// touch its target (possibly on a network share), which must not delay opening the flyout itself.
+        /// </summary>
+        private void ItemButton_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            if (!(sender is FrameworkElement fe) || !(fe.DataContext is FlyoutItemViewModel vm)) return;
+            vm.AdminOptionVisibility = LaunchRules.CanRunAsAdmin(vm.Item, ShortcutRepairService.ResolveLinkTarget)
+                ? Visibility.Visible : Visibility.Collapsed;
+            vm.FileLocationVisibility = LaunchRules.FileLocationTarget(vm.Item, _configService.AppDataDirectory, ShortcutRepairService.ResolveLinkTarget) != null
+                ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         private void ContextLaunch_Click(object sender, RoutedEventArgs e)
         {
             if (sender is MenuItem mi && mi.CommandParameter is FlyoutItemViewModel vm)
@@ -781,7 +809,7 @@ namespace TaskbarGrouper.Views
         private void LaunchItem(FlyoutItemViewModel vm, bool asAdmin)
         {
             // Ctrl+Shift on an item that can't be elevated (a .url, a document) just launches it normally
-            asAdmin &= LaunchRules.CanRunAsAdmin(vm.Item, ShortcutRepairService.ResolveLinkTarget);
+            if (asAdmin) asAdmin = LaunchRules.CanRunAsAdmin(vm.Item, ShortcutRepairService.ResolveLinkTarget);
             try
             {
                 // Custom Folder: Open in Windows Explorer directly!

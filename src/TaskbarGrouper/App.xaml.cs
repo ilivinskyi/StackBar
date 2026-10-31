@@ -22,6 +22,7 @@ namespace TaskbarGrouper
         private bool _isExiting;
         private string? _lastClosedGroupId;
         private DateTime? _lastClosedTimeUtc;
+        private bool _lastClosedByTaskbarClick;
 
         public void RunApplication(string? groupId, bool startMinimized, bool isSetup, bool isUninstall)
         {
@@ -59,6 +60,7 @@ namespace TaskbarGrouper
             // can never be overwritten by a stale copy saved from another.
             _configService = new ConfigService();
             _config = _configService.LoadOrCreateDefault();
+            OfferLegacyDataImport();
 
             // Cheap (a few file copies, once) and must finish before any flyout launches an item.
             // The old copies are deleted only once the config pointing at the new ones is safely on disk.
@@ -88,6 +90,44 @@ namespace TaskbarGrouper
             Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(RunStartupMaintenance));
 
             Run();
+        }
+
+        /// <summary>
+        /// Older versions treated any install folder that had a "data" subfolder as Portable Edition and kept
+        /// the stacks there. Since portable mode now needs the explicit marker, those stacks would seem to
+        /// vanish; offer (once) to bring them over.
+        /// </summary>
+        private void OfferLegacyDataImport()
+        {
+            if (AppInfo.IsPortableMode) return;
+            try
+            {
+                string legacyDir = Path.Combine(AppInfo.BaseDirectory, "data");
+                string marker = Path.Combine(_configService.AppDataDirectory, "legacy-data-checked");
+                if (File.Exists(marker) || !File.Exists(Path.Combine(legacyDir, "groups.json"))) return;
+                File.WriteAllText(marker, legacyDir);
+
+                var answer = MessageBox.Show(
+                    $"StackBar found stacks saved by an earlier version in:\n{legacyDir}\n\n" +
+                    "Load them now? Your current stacks will be replaced (the old folder is left untouched).",
+                    "StackBar", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (answer != MessageBoxResult.Yes) return;
+
+                var imported = _configService.TryImportFrom(legacyDir);
+                if (imported != null)
+                {
+                    _config = imported;
+                }
+                else
+                {
+                    MessageBox.Show("Those stacks could not be imported (see the log for details).", "StackBar",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log("Legacy data import failed: " + ex);
+            }
         }
 
         private void RunStartupMaintenance()
@@ -180,12 +220,18 @@ namespace TaskbarGrouper
         /// over half a second on a busy machine, so instead of a fixed window the client's own start time is
         /// used: a close that happened around or after the client started was caused by the same click.
         /// </summary>
-        internal static bool IsToggleClose(DateTime? lastClosedUtc, DateTime? clientStartUtc, DateTime nowUtc)
+        /// <param name="closedByTaskbarClick">
+        /// The flyout lost focus to the taskbar. Only then may a close well before the client started count
+        /// (the pin click deactivates the flyout before Explorer even starts the process); a flyout dismissed
+        /// anywhere else gets a tight window, so re-clicking the pin right after dismissing it opens it again.
+        /// </param>
+        internal static bool IsToggleClose(DateTime? lastClosedUtc, DateTime? clientStartUtc, DateTime nowUtc, bool closedByTaskbarClick)
         {
             if (!lastClosedUtc.HasValue) return false;
             if (clientStartUtc.HasValue)
             {
-                return lastClosedUtc.Value >= clientStartUtc.Value - TimeSpan.FromSeconds(1) &&
+                var allowance = closedByTaskbarClick ? TimeSpan.FromSeconds(1) : TimeSpan.FromMilliseconds(300);
+                return lastClosedUtc.Value >= clientStartUtc.Value - allowance &&
                        nowUtc - lastClosedUtc.Value < TimeSpan.FromSeconds(15);
             }
             return nowUtc - lastClosedUtc.Value < TimeSpan.FromMilliseconds(500); // older clients send no start time
@@ -194,7 +240,7 @@ namespace TaskbarGrouper
         private void OpenGroupFlyout(string groupId, int cursorX, int cursorY, DateTime? clientStartUtc = null)
         {
             if (string.Equals(_lastClosedGroupId, groupId, StringComparison.OrdinalIgnoreCase) &&
-                IsToggleClose(_lastClosedTimeUtc, clientStartUtc, DateTime.UtcNow))
+                IsToggleClose(_lastClosedTimeUtc, clientStartUtc, DateTime.UtcNow, _lastClosedByTaskbarClick))
             {
                 _lastClosedGroupId = null;
                 return;
@@ -220,6 +266,7 @@ namespace TaskbarGrouper
             {
                 _lastClosedGroupId = groupId;
                 _lastClosedTimeUtc = DateTime.UtcNow;
+                _lastClosedByTaskbarClick = flyout.ClosedByTaskbarClick;
                 if (_activeFlyout == flyout) _activeFlyout = null;
             };
             flyout.Show();

@@ -276,18 +276,63 @@ namespace TaskbarGrouper.Services
                     continue;
                 }
 
-                if (File.Exists(value)) continue;
+                // This runs before the first flyout: only paths that look like StackBar data files from another
+                // location may touch the disk (a File.Exists on a disconnected network path can stall for seconds)
+                if (value.StartsWith(_dir + "\\", StringComparison.OrdinalIgnoreCase)) continue;
                 foreach (var marker in new[] { "\\Links\\", "\\Icons\\" })
                 {
-                    int idx = value.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                    int idx = value.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
                     if (idx < 0) continue;
                     string candidate = _dir + value.Substring(idx);
-                    if (File.Exists(candidate))
+                    if (File.Exists(candidate) && !File.Exists(value))
                     {
                         set(candidate);
                         break;
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Imports stacks from another data folder (e.g. "&lt;install&gt;\data", which older versions silently used
+        /// as portable storage). Shortcut copies, icons and generated shortcuts are copied over, paths are
+        /// re-pointed into this data folder and the result is saved here. The other folder is left untouched.
+        /// </summary>
+        /// <returns>The imported config, or null if there was nothing usable or it could not be saved.</returns>
+        public AppConfig? TryImportFrom(string otherDataDir)
+        {
+            string other = Path.GetFullPath(otherDataDir).TrimEnd('\\');
+            var imported = TryDeserializeFile(Path.Combine(other, "groups.json"));
+            if (imported == null || imported.Groups.Count == 0) return null;
+
+            foreach (var (get, set) in PathFields(imported).ToList())
+            {
+                string? value = get();
+                if (string.IsNullOrEmpty(value)) continue;
+                if (value!.StartsWith(DataDirToken, StringComparison.OrdinalIgnoreCase))
+                    set(_dir + value.Substring(DataDirToken.Length));
+                else if (value.StartsWith(other + "\\", StringComparison.OrdinalIgnoreCase))
+                    set(_dir + value.Substring(other.Length));
+            }
+
+            foreach (var folder in new[] { "Links", "Icons", "Shortcuts" })
+            {
+                CopyMissingFiles(Path.Combine(other, folder), Path.Combine(_dir, folder));
+            }
+
+            imported.MigrationVersion = Math.Max(imported.MigrationVersion, 0);
+            return Save(imported) ? imported : null;
+        }
+
+        private static void CopyMissingFiles(string from, string to)
+        {
+            if (!Directory.Exists(from)) return;
+            foreach (var file in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
+            {
+                string destination = to + file.Substring(from.Length);
+                if (File.Exists(destination)) continue;
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                File.Copy(file, destination);
             }
         }
 

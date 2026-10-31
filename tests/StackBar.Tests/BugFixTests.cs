@@ -337,12 +337,32 @@ namespace StackBar.Tests
             var clientStart = now.AddSeconds(-2);  // process took 2 s to send OPEN
             var closedByClick = clientStart.AddMilliseconds(-150);
 
-            Assert.True(TaskbarGrouper.App.IsToggleClose(closedByClick, clientStart, now));
+            Assert.True(TaskbarGrouper.App.IsToggleClose(closedByClick, clientStart, now, closedByTaskbarClick: true));
             // A flyout closed long before this click started is a fresh open
-            Assert.False(TaskbarGrouper.App.IsToggleClose(clientStart.AddSeconds(-10), clientStart, now));
+            Assert.False(TaskbarGrouper.App.IsToggleClose(clientStart.AddSeconds(-10), clientStart, now, closedByTaskbarClick: true));
             // Older clients without a start time keep the 500 ms rule
-            Assert.True(TaskbarGrouper.App.IsToggleClose(now.AddMilliseconds(-200), null, now));
-            Assert.False(TaskbarGrouper.App.IsToggleClose(now.AddSeconds(-2), null, now));
+            Assert.True(TaskbarGrouper.App.IsToggleClose(now.AddMilliseconds(-200), null, now, closedByTaskbarClick: true));
+            Assert.False(TaskbarGrouper.App.IsToggleClose(now.AddSeconds(-2), null, now, closedByTaskbarClick: true));
+        }
+
+        [Fact]
+        public void Review2_04_reopening_quickly_after_dismissing_elsewhere_is_not_swallowed()
+        {
+            var now = new DateTime(2026, 10, 31, 12, 0, 0, DateTimeKind.Utc);
+            var clientStart = now.AddMilliseconds(-100);
+            var dismissedByClickingTheDesktop = clientStart.AddMilliseconds(-600);
+
+            Assert.False(TaskbarGrouper.App.IsToggleClose(dismissedByClickingTheDesktop, clientStart, now, closedByTaskbarClick: false));
+            // The same timing caused by a click on the taskbar (its pin) is a toggle
+            Assert.True(TaskbarGrouper.App.IsToggleClose(dismissedByClickingTheDesktop, clientStart, now, closedByTaskbarClick: true));
+        }
+
+        [Fact]
+        public void Review2_04_taskbar_windows_are_recognised_by_class_name()
+        {
+            Assert.True(NativePositioningService.IsTaskbarClassName("Shell_TrayWnd"));
+            Assert.True(NativePositioningService.IsTaskbarClassName("Shell_SecondaryTrayWnd"));
+            Assert.False(NativePositioningService.IsTaskbarClassName("Progman"));
         }
 
         [Fact]

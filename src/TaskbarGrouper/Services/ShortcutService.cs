@@ -83,19 +83,50 @@ namespace TaskbarGrouper.Services
         };
 
         /// <summary>
-        /// AppUserModelID prefix for pinned stacks of this StackBar edition. A portable copy adds a tag derived
-        /// from its data folder, so the installed and portable editions can tell their pins apart.
+        /// AppUserModelID prefix for pinned stacks of this StackBar edition. A portable copy adds its instance
+        /// ID, so the installed and portable editions can tell their pins apart.
         /// </summary>
         internal static string GroupAumidPrefix(string appDataDir) => AppInfo.IsPortableMode
-            ? $"StackBar.Portable.{EditionTag(appDataDir)}.Group."
+            ? $"StackBar.Portable.{PortableInstanceId(appDataDir)}.Group."
             : "StackBar.Group.";
 
-        private static string EditionTag(string appDataDir)
+        private static readonly Dictionary<string, string> _instanceIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Random ID created once and stored in the data folder. It travels with the folder, so the portable
+        /// copy still recognises its own pins after the folder moves or the USB drive gets another letter
+        /// (a tag derived from the folder's path would change with it).
+        /// </summary>
+        internal static string PortableInstanceId(string appDataDir)
         {
-            using (var sha = System.Security.Cryptography.SHA1.Create())
+            lock (_instanceIds)
             {
-                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(appDataDir).TrimEnd('\\').ToLowerInvariant()));
-                return BitConverter.ToString(hash).Replace("-", "").Substring(0, 8);
+                if (_instanceIds.TryGetValue(appDataDir, out var cached)) return cached;
+
+                string file = Path.Combine(appDataDir, "instance.id");
+                string? id = null;
+                try
+                {
+                    if (File.Exists(file))
+                    {
+                        string stored = File.ReadAllText(file).Trim();
+                        if (stored.Length == 8 && IsHexPrefix(stored)) id = stored;
+                    }
+                    if (id == null)
+                    {
+                        id = Guid.NewGuid().ToString("N").Substring(0, 8);
+                        Directory.CreateDirectory(appDataDir);
+                        File.WriteAllText(file, id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Log("Could not read or create the portable instance id: " + ex.Message);
+                    id ??= "00000000";
+                }
+
+                _instanceIds[appDataDir] = id!;
+                return id!;
             }
         }
 
@@ -729,20 +760,72 @@ namespace TaskbarGrouper.Services
         /// </summary>
         public static bool GroupContainsSource(AppGroup group, string sourcePath, string? displayName = null)
         {
-            string name = CleanItemName(displayName ?? Path.GetFileNameWithoutExtension(sourcePath));
-            if (group.Items.Any(existing =>
-                    string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(existing.TargetPath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
-                    // Items imported before SourcePath existed: fall back to the display name
-                    (existing.SourcePath == null && existing.Name.Equals(name, StringComparison.OrdinalIgnoreCase))))
+            return new DuplicateIndex(group).Contains(sourcePath, displayName);
+        }
+
+        /// <summary>
+        /// Duplicate check for one import batch: each existing item's shortcut is read once, not once per
+        /// candidate (importing many apps into a big stack would otherwise re-read every shortcut each time).
+        /// </summary>
+        public sealed class DuplicateIndex
+        {
+            private readonly AppGroup _group;
+            private readonly HashSet<string> _identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            public DuplicateIndex(AppGroup group)
             {
-                return true;
+                _group = group;
+                foreach (var item in group.Items) _identities.UnionWith(LaunchIdentities(item.TargetPath));
             }
 
-            // The same app is offered by several sources (pinned .lnk, Start Menu .lnk, AppsFolder entry),
-            // each with its own path: compare what they launch instead
-            var newKeys = LaunchIdentities(sourcePath);
-            return newKeys.Count > 0 && group.Items.Any(existing => LaunchIdentities(existing.TargetPath).Overlaps(newKeys));
+            public bool Contains(string sourcePath, string? displayName = null)
+            {
+                string name = CleanItemName(displayName ?? Path.GetFileNameWithoutExtension(sourcePath));
+                if (_group.Items.Any(existing =>
+                        string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(existing.TargetPath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
+                        // Items imported before SourcePath existed: fall back to the display name
+                        (existing.SourcePath == null && existing.Name.Equals(name, StringComparison.OrdinalIgnoreCase))))
+                {
+                    return true;
+                }
+
+                // The same app is offered by several sources (pinned .lnk, Start Menu .lnk, AppsFolder entry),
+                // each with its own path: compare what they launch instead
+                return LaunchIdentities(sourcePath).Overlaps(_identities);
+            }
+
+            /// <summary>Records an item added during the batch.</summary>
+            public void Add(GroupItem item) => _identities.UnionWith(LaunchIdentities(item.TargetPath));
+        }
+
+        [DllImport("shell32.dll")]
+        private static extern int SHGetKnownFolderPath([MarshalAs(UnmanagedType.LPStruct)] Guid rfid, uint flags, IntPtr token, out IntPtr path);
+
+        /// <summary>
+        /// AppsFolder ids of desktop apps without an app ID look like "{1AC14E77-...}\cmd.exe": a known-folder
+        /// GUID (here: System32) plus the rest of the path. Returns the real path, or null if it isn't one.
+        /// </summary>
+        internal static string? ExpandKnownFolderPath(string id)
+        {
+            if (!id.StartsWith("{")) return null;
+            int close = id.IndexOf("}\\", StringComparison.Ordinal);
+            if (close < 0 || !Guid.TryParse(id.Substring(0, close + 1), out var folderId)) return null;
+
+            IntPtr ptr = IntPtr.Zero;
+            try
+            {
+                if (SHGetKnownFolderPath(folderId, 0, IntPtr.Zero, out ptr) != 0) return null;
+                return Path.Combine(Marshal.PtrToStringUni(ptr)!, id.Substring(close + 2));
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                if (ptr != IntPtr.Zero) Marshal.FreeCoTaskMem(ptr);
+            }
         }
 
         /// <summary>
@@ -757,10 +840,10 @@ namespace TaskbarGrouper.Services
             const string appsFolder = "shell:AppsFolder\\";
             if (path.StartsWith(appsFolder, StringComparison.OrdinalIgnoreCase))
             {
-                // A desktop app's AppsFolder id is either its app ID or its exe path
+                // A desktop app's AppsFolder id is its app ID, its exe path, or a known-folder-relative exe path
                 string id = path.Substring(appsFolder.Length);
                 keys.Add("app:" + id);
-                keys.Add("exe:" + id + "|");
+                keys.Add("exe:" + (ExpandKnownFolderPath(id) ?? id) + "|");
                 return keys;
             }
 

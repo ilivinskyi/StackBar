@@ -85,6 +85,7 @@ namespace TaskbarGrouper.Services
 
         // Accessed from the UI thread and from the importer's background scan
         private static readonly Dictionary<string, ImageSource> _iconCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+        private static readonly object _icoFileLock = new object();
         private static readonly Dictionary<string, ImageSource> _groupPreviewCache = new Dictionary<string, ImageSource>(StringComparer.Ordinal);
 
         public static ImageSource? ExtractIcon(GroupItem item) => ExtractIcon(item.TargetPath, item.CustomIconPath, item.CustomIconIndex);
@@ -540,19 +541,26 @@ namespace TaskbarGrouper.Services
 
                 string icoPath = Path.Combine(outputDirectory, $"stackbar_{group.Id}_{hash}.ico");
 
-                if (!File.Exists(icoPath))
+                // Startup repair (background thread) and Studio edits (UI thread) can both get here
+                lock (_icoFileLock)
                 {
-                    // Clean up older icons for this group
+                    if (!File.Exists(icoPath))
+                    {
+                        SavePngBytesAsIco(pngBytes, icoPath);
+                    }
+
+                    // Clean up older icons for this group, but not ones written moments ago: the other writer
+                    // may have just pointed a pin at it. Those go on a later regeneration.
                     try
                     {
                         foreach (var old in Directory.GetFiles(outputDirectory, $"stackbar_{group.Id}_*.ico"))
                         {
+                            if (string.Equals(old, icoPath, StringComparison.OrdinalIgnoreCase)) continue;
+                            if (DateTime.UtcNow - File.GetLastWriteTimeUtc(old) < TimeSpan.FromMinutes(2)) continue;
                             File.Delete(old);
                         }
                     }
                     catch { }
-
-                    SavePngBytesAsIco(pngBytes, icoPath);
                 }
 
                 return icoPath;

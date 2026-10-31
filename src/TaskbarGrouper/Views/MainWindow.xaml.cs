@@ -818,9 +818,10 @@ namespace TaskbarGrouper.Views
             if (dialog.ShowDialog() == true && dialog.SelectedItems.Count > 0)
             {
                 int added = 0;
+                var duplicates = new ShortcutService.DuplicateIndex(_selectedGroup);
                 foreach (var item in dialog.SelectedItems)
                 {
-                    if (TryAddItem(item.TargetPath, item.Name)) added++;
+                    if (TryAddItem(item.TargetPath, item.Name, duplicates)) added++;
                 }
                 SyncGroupAndTaskbarIcon(_selectedGroup);
                 RefreshItemsList();
@@ -844,9 +845,10 @@ namespace TaskbarGrouper.Views
 
             if (ofd.ShowDialog() == true)
             {
+                var duplicates = new ShortcutService.DuplicateIndex(_selectedGroup);
                 foreach (var file in ofd.FileNames)
                 {
-                    TryAddItem(file, null);
+                    TryAddItem(file, null, duplicates);
                 }
                 SyncGroupAndTaskbarIcon(_selectedGroup);
                 RefreshItemsList();
@@ -897,13 +899,14 @@ namespace TaskbarGrouper.Views
         /// Imports a file/shortcut/app into the selected group unless it is already there.
         /// The duplicate check runs before the import, which copies shortcuts under a new unique name.
         /// </summary>
-        private bool TryAddItem(string sourcePath, string? displayName)
+        private bool TryAddItem(string sourcePath, string? displayName, ShortcutService.DuplicateIndex duplicates)
         {
             if (_selectedGroup == null) return false;
-            if (ShortcutService.GroupContainsSource(_selectedGroup, sourcePath, displayName)) return false;
+            if (duplicates.Contains(sourcePath, displayName)) return false;
 
             var persistent = ShortcutService.ImportAndPersistShortcut(sourcePath, _configService.AppDataDirectory, displayName);
             _selectedGroup.Items.Add(persistent);
+            duplicates.Add(persistent);
             return true;
         }
 
@@ -941,9 +944,10 @@ namespace TaskbarGrouper.Views
                 if (files == null) return;
 
                 int count = 0;
+                var duplicates = new ShortcutService.DuplicateIndex(_selectedGroup);
                 foreach (var file in files)
                 {
-                    if (TryAddItem(file, null)) count++;
+                    if (TryAddItem(file, null, duplicates)) count++;
                 }
                 SyncGroupAndTaskbarIcon(_selectedGroup);
                 RefreshItemsList();

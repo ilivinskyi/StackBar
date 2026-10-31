@@ -11,8 +11,11 @@
 ## ✨ Highlights
 
 - **Zero Runtime Dependencies**: Re-targeted to **.NET Framework 4.8** (pre-installed on every Windows 10 1903+ and Windows 11 machine). Runs directly out of the box without requiring the .NET Desktop Runtime or any external redistributables.
-- **Single Standalone Executable**: Entire application, portable runtime, and installer wizard are packaged into a single ~650 KB binary with no auxiliary DLLs.
-- **Portable Edition Supported**: Runs completely self-contained from a folder or USB drive with isolated `./data/` storage, leaving zero registry or AppData footprint. Can run simultaneously alongside an installed copy without IPC collisions.
+- **Single Standalone Executable**: Entire application, portable runtime, and installer wizard are packaged into a single ~700 KB binary with no auxiliary DLLs.
+- **Portable Edition Supported**: Runs from a folder or USB drive and keeps its settings, shortcut copies, icons and logs in `./data/`, with no registry entries of its own.
+  Stored paths are relative to `./data/`, and pinned stacks are tied to an ID kept in `./data/`, so moving the folder or getting a new drive letter doesn't break them.
+  Outside `./data/` it only touches what you ask for: taskbar pins you create, and (with *Repair outdated app shortcuts* on) other apps' Start Menu / pinned shortcuts.
+  Portable mode is switched on by the `.portable` file shipped in the zip (or by naming the exe `StackBar-Portable.exe`). It runs side by side with an installed copy without either touching the other's pins.
 - **Separate Pinned Taskbar Folders**: Generates custom `.lnk` shortcuts per category with distinct `AppUserModelID`s (`StackBar.Group.<id>`), allowing you to pin multiple StackBar folders side-by-side on the taskbar.
 - **60-Color Curated Accent Palette**: Select from an expanded 60-color palette (organized into 6 harmonious color rows: Reds, Oranges, Ambers, Limes, Emeralds, Teals, Cyans, Blues, Purples, and Pinks) with live preview on the flyout mockup.
 - **Automatic Pinned Taskbar Sync**: Modifying a stack's icon, accent color, or app order automatically updates the shortcut in Windows' `User Pinned\TaskBar` and asks the taskbar to reload icons only when the stack's icon actually changed (no forced icon-cache flush), eliminating the need to unpin and re-pin.
@@ -105,7 +108,8 @@ dotnet test tests\StackBar.Tests\StackBar.Tests.csproj
 │       ├── Assets/                 # Multi-res app_icon.ico & app_icon.png
 │       ├── Common/                 # Polyfills & string utilities
 │       ├── Models/                 # AppConfig, AppGroup, GroupItem
-│       ├── Services/               # IconHelper, ShortcutService, IpcService, NativePositioningService, ConfigService, AppLogger
+│       ├── Services/               # ConfigService, ShortcutService, ShortcutRepairService, IconHelper, IpcService,
+│       │                           # NativePositioningService, StartupService, InstallLocation, LaunchRules, AppInfo/AppLogger
 │       ├── Themes/                 # Dark.xaml (Dark theme scrollbars, checkboxes, controls)
 │       └── Views/                  # MainWindow (Studio), FlyoutWindow, TaskbarImporterWindow, SetupWindow
 ├── artifacts/                      # Created by build.ps1 (not committed)
@@ -114,7 +118,7 @@ dotnet test tests\StackBar.Tests\StackBar.Tests.csproj
 │   ├── StackBar-Portable/          # Portable standalone directory (isolated ./data/)
 │   └── StackBar-Portable.zip       # Zipped Portable distribution
 ├── tests/
-│   └── StackBar.Tests/             # xUnit tests (config persistence, shortcut matching, icon alpha)
+│   └── StackBar.Tests/             # xUnit tests (config, pins, shortcut repair, install safety, icons, placement)
 ├── build.ps1                       # Automated build & staging script
 └── TaskbarGrouper.sln
 ```

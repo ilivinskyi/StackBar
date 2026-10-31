@@ -22,6 +22,45 @@ namespace TaskbarGrouper.Services
     {
         private const int Win32FindDataSize = 592;
         private const int STGM_READWRITE = 0x2;
+        private const uint SLGP_RAWPATH = 0x4;
+        internal const uint SLDF_HAS_EXP_SZ = 0x200;
+        internal const uint SLDF_HAS_DARWINID = 0x1000;
+
+        [ComImport]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        [Guid("45e2b4ae-b1c3-11d0-b92f-00a0c90312e1")]
+        internal interface IShellLinkDataList
+        {
+            [PreserveSig] int AddDataBlock(IntPtr dataBlock);
+            [PreserveSig] int CopyDataBlock(uint signature, out IntPtr dataBlock);
+            [PreserveSig] int RemoveDataBlock(uint signature);
+            [PreserveSig] int GetFlags(out uint flags);
+            [PreserveSig] int SetFlags(uint flags);
+        }
+
+        private static uint GetLinkFlags(object link)
+        {
+            return link is IShellLinkDataList data && data.GetFlags(out uint flags) == 0 ? flags : 0;
+        }
+
+        /// <summary>Windows Installer "advertised" shortcut (older Office and other MSI apps): never refreshed.</summary>
+        internal static bool IsAdvertised(string lnkPath)
+        {
+            var link = (IShellLinkW)new ShellLink();
+            try
+            {
+                ((IPersistFile)link).Load(lnkPath, 0);
+                return (GetLinkFlags(link) & SLDF_HAS_DARWINID) != 0;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(link);
+            }
+        }
 
         // Target-written timestamps are compared with some slack (FAT-style rounding in stored data)
         private static readonly TimeSpan TimestampTolerance = TimeSpan.FromSeconds(2);
@@ -161,13 +200,27 @@ namespace TaskbarGrouper.Services
             {
                 var persist = (IPersistFile)link;
                 persist.Load(lnkPath, STGM_READWRITE);
+                uint flags = GetLinkFlags(link);
+                // Windows Installer "advertised" shortcuts resolve through the installer, not their stored path:
+                // re-setting the path would turn them into links to an installer cache file
+                if ((flags & SLDF_HAS_DARWINID) != 0) return false;
+
                 var sb = new StringBuilder(1024);
                 if (link.GetPath(sb, sb.Capacity, IntPtr.Zero, 0) != 0) return false;
                 string target = sb.ToString();
                 if (!File.Exists(target)) return false;
 
+                // A target stored with environment variables (%LOCALAPPDATA%\...) is set back in that form,
+                // so the shortcut keeps working for other users and after profile moves
+                string pathToSet = target;
+                if ((flags & SLDF_HAS_EXP_SZ) != 0)
+                {
+                    var raw = new StringBuilder(1024);
+                    if (link.GetPath(raw, raw.Capacity, IntPtr.Zero, SLGP_RAWPATH) == 0 && raw.Length > 0) pathToSet = raw.ToString();
+                }
+
                 link.SetPath(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
-                if (link.SetPath(target) != 0) return false;
+                if (link.SetPath(pathToSet) != 0) return false;
                 persist.Save(null, true);
                 return true;
             }
@@ -190,7 +243,8 @@ namespace TaskbarGrouper.Services
         public static RepairOutcome RepairIfStale(string lnkPath, string? backupDir)
         {
             if (!TryReadStoredTarget(lnkPath, out var target, out uint storedSize, out DateTime storedWriteUtc) ||
-                !IsStale(target, storedSize, storedWriteUtc))
+                !IsStale(target, storedSize, storedWriteUtc) ||
+                IsAdvertised(lnkPath))
             {
                 return RepairOutcome.NotNeeded;
             }

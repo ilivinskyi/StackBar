@@ -223,6 +223,7 @@
                                     PreviewMouseLeftButtonDown="ItemButton_PreviewMouseLeftButtonDown"
                                     PreviewMouseMove="ItemButton_PreviewMouseMove"
                                     PreviewMouseLeftButtonUp="ItemButton_PreviewMouseLeftButtonUp"
+                                    ContextMenuOpening="ItemButton_ContextMenuOpening"
                                     Tag="{Binding}"
                                     Width="82"
                                     Height="{Binding TileHeight}"
