@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.Serialization;
 using System.Collections.Generic;
+using System.Linq;
 using System.ComponentModel;
 
 namespace TaskbarGrouper.Models
@@ -51,11 +52,18 @@ namespace TaskbarGrouper.Models
         [DataMember(Name = "repairAppShortcuts")]
         public bool RepairAppShortcuts { get; set; } = true;
 
+        /// <summary>One-time startup migrations already applied (0 for configs from older versions).</summary>
+        [DataMember(Name = "migrationVersion", EmitDefaultValue = false)]
+        public int MigrationVersion { get; set; }
+
+        public const int CurrentMigrationVersion = 1;
+
         [OnDeserializing]
         internal void OnDeserializing(StreamingContext context)
         {
             Groups = new List<AppGroup>();
             RepairAppShortcuts = true;
+            MigrationVersion = 0;
         }
     }
 
@@ -69,6 +77,8 @@ namespace TaskbarGrouper.Models
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Name)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail)));
+            // The sidebar binds Items.Count; re-raising Items refreshes it after adds/removes
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Items)));
         }
 
         [DataMember(Name = "id", EmitDefaultValue = false)]
@@ -137,6 +147,37 @@ namespace TaskbarGrouper.Models
 
         [IgnoreDataMember]
         public System.Windows.Media.ImageSource? Thumbnail => Services.IconHelper.GenerateGroupPreviewImage(this);
+
+        /// <summary>
+        /// Independent copy for background work (icon generation, shortcut checks): the UI thread may edit
+        /// the live group, and saving briefly rewrites its paths, while the copy is being read.
+        /// </summary>
+        public AppGroup CloneForReading()
+        {
+            return new AppGroup
+            {
+                Id = Id,
+                Name = Name,
+                IconGlyph = IconGlyph,
+                IconMode = IconMode,
+                CustomFolderIconPath = CustomFolderIconPath,
+                AccentColorHex = AccentColorHex,
+                Columns = Columns,
+                ShowLabels = ShowLabels,
+                CloseOnLaunch = CloseOnLaunch,
+                Items = Items.Select(i => new GroupItem
+                {
+                    Name = i.Name,
+                    TargetPath = i.TargetPath,
+                    Arguments = i.Arguments,
+                    WorkingDirectory = i.WorkingDirectory,
+                    CustomIconPath = i.CustomIconPath,
+                    CustomIconIndex = i.CustomIconIndex,
+                    Kind = i.Kind,
+                    SourcePath = i.SourcePath
+                }).ToList()
+            };
+        }
 
         [OnDeserializing]
         internal void OnDeserializing(StreamingContext context)

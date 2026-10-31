@@ -144,6 +144,7 @@
                         <StackPanel>
                             <CheckBox x:Name="RunAtStartupCheck"
                                       Content="Run in Tray at Windows Startup"
+                                      ToolTipService.ShowOnDisabled="True"
                                       Foreground="#CCFFFFFF"
                                       FontSize="11.5"
                                       VerticalContentAlignment="Center"

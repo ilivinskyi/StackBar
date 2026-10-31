@@ -77,7 +77,8 @@ namespace TaskbarGrouper.Services
             void accLocation(out int pxLeft, out int pyTop, out int cxWidth, out int cyHeight, [In, MarshalAs(UnmanagedType.Struct)] object varChild);
         }
 
-        public static int FindTaskbarButtonCenterX(POINT cursor)
+        /// <param name="scale">Monitor DPI scale: the size limits are in physical pixels, so they grow with scaling.</param>
+        public static int FindTaskbarButtonCenterX(POINT cursor, double scale = 1.0)
         {
             try
             {
@@ -88,7 +89,7 @@ namespace TaskbarGrouper.Services
                 {
                     int l, t, w, h;
                     acc.accLocation(out l, out t, out w, out h, childId);
-                    if (w >= 20 && w <= 320 && h >= 20 && h <= 120)
+                    if (w >= 20 * scale && w <= 320 * scale && h >= 20 * scale && h <= 120 * scale)
                     {
                         return l + (w / 2);
                     }
@@ -96,6 +97,66 @@ namespace TaskbarGrouper.Services
             }
             catch { }
             return cursor.X;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string className, string? windowName);
+
+        /// <summary>
+        /// The taskbar window on the given monitor (primary: Shell_TrayWnd, others: Shell_SecondaryTrayWnd).
+        /// Its rectangle is reported even while an auto-hidden taskbar is tucked away at the screen edge.
+        /// </summary>
+        private static System.Drawing.Rectangle? FindTaskbarRect(System.Drawing.Rectangle monitorBounds)
+        {
+            System.Drawing.Rectangle? best = null;
+            int bestOverlap = 0;
+            foreach (var cls in new[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" })
+            {
+                IntPtr hwnd = IntPtr.Zero;
+                while ((hwnd = FindWindowEx(IntPtr.Zero, hwnd, cls, null)) != IntPtr.Zero)
+                {
+                    if (!GetWindowRect(hwnd, out RECT r)) continue;
+                    var rect = System.Drawing.Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+                    var overlap = System.Drawing.Rectangle.Intersect(rect, monitorBounds);
+                    int area = overlap.Width * overlap.Height;
+                    if (area > bestOverlap)
+                    {
+                        bestOverlap = area;
+                        best = rect;
+                    }
+                }
+            }
+            return best;
+        }
+
+        /// <summary>Which screen edge a taskbar rectangle sits on (a wide bar is top/bottom, a tall one left/right).</summary>
+        internal static TaskbarEdge ClassifyEdge(System.Drawing.Rectangle taskbar, System.Drawing.Rectangle monitorBounds)
+        {
+            int taskbarCenterX = taskbar.Left + taskbar.Width / 2;
+            int taskbarCenterY = taskbar.Top + taskbar.Height / 2;
+            int monitorCenterX = monitorBounds.Left + monitorBounds.Width / 2;
+            int monitorCenterY = monitorBounds.Top + monitorBounds.Height / 2;
+            if (taskbar.Width >= taskbar.Height)
+                return taskbarCenterY < monitorCenterY ? TaskbarEdge.Top : TaskbarEdge.Bottom;
+            return taskbarCenterX < monitorCenterX ? TaskbarEdge.Left : TaskbarEdge.Right;
+        }
+
+        /// <summary>
+        /// Area the flyout may use. With an auto-hidden taskbar the work area is the whole screen, so the
+        /// taskbar's thickness is reserved explicitly (it is shown while the user clicks a pin).
+        /// </summary>
+        internal static System.Drawing.Rectangle UsableArea(System.Drawing.Rectangle workArea, System.Drawing.Rectangle monitorBounds,
+            System.Drawing.Rectangle? taskbar, TaskbarEdge edge)
+        {
+            if (!taskbar.HasValue || workArea != monitorBounds) return workArea;
+            var t = taskbar.Value;
+            switch (edge)
+            {
+                case TaskbarEdge.Top: return System.Drawing.Rectangle.FromLTRB(workArea.Left, workArea.Top + t.Height, workArea.Right, workArea.Bottom);
+                case TaskbarEdge.Left: return System.Drawing.Rectangle.FromLTRB(workArea.Left + t.Width, workArea.Top, workArea.Right, workArea.Bottom);
+                case TaskbarEdge.Right: return System.Drawing.Rectangle.FromLTRB(workArea.Left, workArea.Top, workArea.Right - t.Width, workArea.Bottom);
+                default: return System.Drawing.Rectangle.FromLTRB(workArea.Left, workArea.Top, workArea.Right, workArea.Bottom - t.Height);
+            }
         }
 
         public enum TaskbarEdge
@@ -156,16 +217,33 @@ namespace TaskbarGrouper.Services
                 Monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST)
             };
 
-            if (anchor.WorkArea.Top > anchor.Bounds.Top) anchor.Edge = TaskbarEdge.Top;
+            // The real taskbar window decides the edge: comparing work area and bounds fails for auto-hidden
+            // taskbars (they are equal), which used to put every flyout at the bottom
+            var taskbar = FindTaskbarRect(anchor.Bounds);
+            if (taskbar.HasValue)
+            {
+                anchor.Edge = ClassifyEdge(taskbar.Value, anchor.Bounds);
+            }
+            else if (anchor.WorkArea.Top > anchor.Bounds.Top) anchor.Edge = TaskbarEdge.Top;
             else if (anchor.WorkArea.Left > anchor.Bounds.Left) anchor.Edge = TaskbarEdge.Left;
             else if (anchor.WorkArea.Right < anchor.Bounds.Right) anchor.Edge = TaskbarEdge.Right;
             else anchor.Edge = TaskbarEdge.Bottom;
+            anchor.WorkArea = UsableArea(anchor.WorkArea, anchor.Bounds, taskbar, anchor.Edge);
 
-            // Snap to the taskbar button's center only when the click really was on the taskbar
-            bool onTaskbar = !anchor.WorkArea.Contains(cursor.X, cursor.Y);
-            if (onTaskbar && (anchor.Edge == TaskbarEdge.Top || anchor.Edge == TaskbarEdge.Bottom))
+            if (anchor.Edge == TaskbarEdge.Top || anchor.Edge == TaskbarEdge.Bottom)
             {
-                anchor.TargetCenterX = FindTaskbarButtonCenterX(cursor);
+                bool onTaskbar = taskbar.HasValue ? taskbar.Value.Contains(cursor.X, cursor.Y) : !anchor.WorkArea.Contains(cursor.X, cursor.Y);
+                if (onTaskbar)
+                {
+                    // Snap to the clicked taskbar button's center
+                    anchor.TargetCenterX = FindTaskbarButtonCenterX(cursor, GetMonitorScale(anchor.Monitor));
+                }
+                else if (taskbar.HasValue)
+                {
+                    // Opened from the keyboard (Win+number) or the Start menu: the mouse can be anywhere, so
+                    // center on the taskbar instead of following the cursor
+                    anchor.TargetCenterX = taskbar.Value.Left + taskbar.Value.Width / 2;
+                }
             }
 
             return anchor;

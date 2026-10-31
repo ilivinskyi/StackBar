@@ -59,7 +59,8 @@ namespace TaskbarGrouper
             if (!string.IsNullOrEmpty(groupId))
             {
                 NativePositioningService.GetCursorPos(out var pt);
-                if (IpcService.SendCommand($"OPEN|{groupId}|{pt.X}|{pt.Y}"))
+                long startTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+                if (IpcService.SendCommand($"OPEN|{groupId}|{pt.X}|{pt.Y}|{startTicks}"))
                 {
                     return;
                 }
@@ -89,7 +90,9 @@ namespace TaskbarGrouper
 
                     // Another instance became resident in the meantime: give its pipe server time to come up
                     NativePositioningService.GetCursorPos(out var cursor);
-                    string command = string.IsNullOrEmpty(groupId) ? "MANAGER" : $"OPEN|{groupId}|{cursor.X}|{cursor.Y}";
+                    string command = string.IsNullOrEmpty(groupId)
+                        ? "MANAGER"
+                        : $"OPEN|{groupId}|{cursor.X}|{cursor.Y}|{Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks}";
                     IpcService.SendCommand(command, connectTimeoutMs: 1500);
                     return;
                 }

@@ -183,8 +183,6 @@ namespace TaskbarGrouper.Views
             for (int idx = 0; idx < items.Count; idx++)
             {
                 var item = items[idx];
-                bool isShell = item.Kind == ItemKind.ShellApp;
-                bool isFolder = item.Kind == ItemKind.Folder || Directory.Exists(item.TargetPath);
 
                 _viewModels.Add(new FlyoutItemViewModel
                 {
@@ -193,8 +191,10 @@ namespace TaskbarGrouper.Views
                     HotkeyHint = idx < 9 ? $"{idx + 1}" : string.Empty,
                     TileHeight = _group.ShowLabels ? 82 : 62,
                     LabelVisibility = _group.ShowLabels ? Visibility.Visible : Visibility.Collapsed,
-                    AdminOptionVisibility = (isShell || isFolder) ? Visibility.Collapsed : Visibility.Visible,
-                    FileLocationVisibility = isShell ? Visibility.Collapsed : Visibility.Visible,
+                    AdminOptionVisibility = LaunchRules.CanRunAsAdmin(item, ShortcutRepairService.ResolveLinkTarget) ? Visibility.Visible : Visibility.Collapsed,
+                    FileLocationVisibility = LaunchRules.FileLocationTarget(item, _configService.AppDataDirectory, ShortcutRepairService.ResolveLinkTarget) != null
+                        ? Visibility.Visible
+                        : Visibility.Collapsed,
                     Item = item,
                     Icon = IconHelper.ExtractIcon(item),
                     IsJiggling = _isJiggleMode
@@ -205,12 +205,18 @@ namespace TaskbarGrouper.Views
         /// <summary>
         /// Saves the shared config and tells Studio, so its in-memory view stays in sync with this flyout's edits.
         /// </summary>
-        private void PersistGroupChange()
+        /// <returns>false if the config could not be saved (the user has been told).</returns>
+        private bool PersistGroupChange()
         {
-            _configService.Save(_config);
+            bool saved = _configService.Save(_config);
             ShortcutService.UpdatePinnedTaskbarShortcutForGroup(_group, _configService.AppDataDirectory);
             _group.NotifyAppearanceChanged();
             _configService.RaiseGroupChanged(_group.Id);
+            if (!saved)
+            {
+                ShowModal("StackBar could not save this change:\n" + _configService.LastError, "StackBar", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            return saved;
         }
 
         private MessageBoxResult ShowModal(string text, string caption, MessageBoxButton buttons, MessageBoxImage image)
@@ -303,6 +309,9 @@ namespace TaskbarGrouper.Views
 
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
+            // Clicking outside closes the flyout without a LostFocus on the title box; keep the typed name,
+            // the same as clicking a tile inside the flyout does
+            if (GroupTitleBox.Visibility == Visibility.Visible) CommitRename();
             _isClosing = true;
             _longPressTimer?.Stop();
         }
@@ -721,8 +730,11 @@ namespace TaskbarGrouper.Views
                 if (res == MessageBoxResult.Yes)
                 {
                     _group.Items.Remove(vm.Item);
-                    ShortcutService.DeletePersistedLinkIfUnused(vm.Item, _config, _configService.AppDataDirectory);
-                    PersistGroupChange();
+                    // The copied shortcut is deleted only once the config without the item is on disk
+                    if (PersistGroupChange())
+                    {
+                        ShortcutService.DeletePersistedLinkIfUnused(vm.Item, _config, _configService.AppDataDirectory);
+                    }
                     if (_group.Items.Count == 0)
                         ExitJiggleMode();
                     PopulateViewModels();
@@ -758,31 +770,18 @@ namespace TaskbarGrouper.Views
         {
             if (sender is MenuItem mi && mi.CommandParameter is FlyoutItemViewModel vm)
             {
-                string target = vm.Item.TargetPath;
-                if (Directory.Exists(target))
-                {
-                    Process.Start("explorer.exe", $"\"{target}\"");
-                    Close();
-                    return;
-                }
+                string? target = LaunchRules.FileLocationTarget(vm.Item, _configService.AppDataDirectory, ShortcutRepairService.ResolveLinkTarget);
+                if (target == null) return;
 
-                if (target.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
-                {
-                    string? realTarget = ShortcutService.ParseShortcut(target).TargetPath;
-                    if (!string.IsNullOrEmpty(realTarget) && File.Exists(realTarget))
-                        target = realTarget;
-                }
-
-                if (File.Exists(target))
-                {
-                    Process.Start("explorer.exe", $"/select,\"{target}\"");
-                    Close();
-                }
+                Process.Start("explorer.exe", Directory.Exists(target) ? $"\"{target}\"" : $"/select,\"{target}\"");
+                Close();
             }
         }
 
         private void LaunchItem(FlyoutItemViewModel vm, bool asAdmin)
         {
+            // Ctrl+Shift on an item that can't be elevated (a .url, a document) just launches it normally
+            asAdmin &= LaunchRules.CanRunAsAdmin(vm.Item, ShortcutRepairService.ResolveLinkTarget);
             try
             {
                 // Custom Folder: Open in Windows Explorer directly!
@@ -807,11 +806,9 @@ namespace TaskbarGrouper.Views
                 }
                 else
                 {
-                    // Must run before launching: the taskbar reads the app's shortcut when its button appears
-                    if (_config.RepairAppShortcuts)
-                    {
-                        ShortcutRepairService.PrepareLaunch(vm.Item, _configService.AppDataDirectory);
-                    }
+                    // Must run before launching: the taskbar reads the app's shortcut when its button appears.
+                    // StackBar's own copy is always kept current; other apps' shortcuts only with the setting on.
+                    ShortcutRepairService.PrepareLaunch(vm.Item, _configService.AppDataDirectory, _config.RepairAppShortcuts);
 
                     string workDir = vm.Item.WorkingDirectory;
                     if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))

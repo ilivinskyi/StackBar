@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Xml;
 using System.Runtime.Serialization.Json;
@@ -10,17 +11,26 @@ namespace TaskbarGrouper.Services
 {
     public class ConfigService
     {
+        /// <summary>
+        /// Stands for the data folder in stored paths, so Portable Edition keeps working when its folder
+        /// moves or the USB drive gets another letter (and the installed edition when %AppData% moves).
+        /// </summary>
+        internal const string DataDirToken = "%STACKBAR_DATA%";
+
         private readonly string _configPath;
         private readonly string _backupPath;
         private readonly string _dir;
+        private readonly string? _exePath;
 
-        public ConfigService() : this(DefaultDataDirectory(), migrateLegacy: !AppInfo.IsPortableMode)
+        public ConfigService() : this(DefaultDataDirectory(), migrateLegacy: !AppInfo.IsPortableMode, exePath: AppInfo.ExePath)
         {
         }
 
-        public ConfigService(string dataDirectory, bool migrateLegacy = false)
+        /// <param name="exePath">Recorded as the config's LastExePath; null (tests) leaves it untouched.</param>
+        public ConfigService(string dataDirectory, bool migrateLegacy = false, string? exePath = null)
         {
-            _dir = dataDirectory;
+            _dir = Path.GetFullPath(dataDirectory).TrimEnd('\\');
+            _exePath = exePath;
             Directory.CreateDirectory(_dir);
             _configPath = Path.Combine(_dir, "groups.json");
             _backupPath = Path.Combine(_dir, "groups.json.bak");
@@ -59,12 +69,15 @@ namespace TaskbarGrouper.Services
         public string ConfigPath => _configPath;
         public string AppDataDirectory => _dir;
 
+        /// <summary>Why the last <see cref="Save"/> failed (null after a successful save).</summary>
+        public string? LastError { get; private set; }
+
         public AppConfig LoadOrCreateDefault()
         {
             if (File.Exists(_configPath))
             {
                 var cfg = TryDeserializeFile(_configPath);
-                if (cfg != null) return SanitizeAndPersist(cfg);
+                if (cfg != null) return PrepareLoaded(cfg);
 
                 // Corrupted file: preserve it once, then recover from the backup
                 try
@@ -83,7 +96,7 @@ namespace TaskbarGrouper.Services
                         // Restore the main file from the backup so the next load doesn't hit the corrupt file again
                         // and the next save doesn't rotate the corrupt file into the backup slot.
                         try { File.Copy(_backupPath, _configPath, true); } catch { }
-                        return SanitizeAndPersist(backupCfg);
+                        return PrepareLoaded(backupCfg);
                     }
                 }
             }
@@ -91,7 +104,8 @@ namespace TaskbarGrouper.Services
             // Defaults: clean, empty categories
             var defaultConfig = new AppConfig
             {
-                LastExePath = AppInfo.ExePath,
+                LastExePath = _exePath,
+                MigrationVersion = AppConfig.CurrentMigrationVersion,
                 Groups = new List<AppGroup>
                 {
                     new AppGroup
@@ -128,6 +142,13 @@ namespace TaskbarGrouper.Services
             return defaultConfig;
         }
 
+        private AppConfig PrepareLoaded(AppConfig cfg)
+        {
+            ExpandDataPaths(cfg);
+            if (SanitizeConfig(cfg)) Save(cfg);
+            return cfg;
+        }
+
         private AppConfig? TryDeserializeFile(string path)
         {
             try
@@ -146,20 +167,33 @@ namespace TaskbarGrouper.Services
             return null;
         }
 
-        public void Save(AppConfig config)
+        /// <returns>
+        /// false if the config could not be written (see <see cref="LastError"/>). Callers must not delete
+        /// files the new config stops referencing unless this returned true.
+        /// </returns>
+        public bool Save(AppConfig config)
         {
             try
             {
-                config.LastExePath = AppInfo.ExePath;
+                if (_exePath != null) config.LastExePath = _exePath;
                 string tempPath = Path.Combine(_dir, "groups.json.tmp");
 
                 var serializer = new DataContractJsonSerializer(typeof(AppConfig));
                 using (var ms = new MemoryStream())
                 {
-                    using (var writer = JsonReaderWriterFactory.CreateJsonWriter(ms, Encoding.UTF8, true, true))
+                    // Paths are written relative to the data folder and restored right after writing
+                    var restore = CollapseDataPaths(config);
+                    try
                     {
-                        serializer.WriteObject(writer, config);
-                        writer.Flush();
+                        using (var writer = JsonReaderWriterFactory.CreateJsonWriter(ms, Encoding.UTF8, true, true))
+                        {
+                            serializer.WriteObject(writer, config);
+                            writer.Flush();
+                        }
+                    }
+                    finally
+                    {
+                        restore();
                     }
 
                     File.WriteAllBytes(tempPath, ms.ToArray());
@@ -182,20 +216,84 @@ namespace TaskbarGrouper.Services
                 {
                     File.Move(tempPath, _configPath);
                 }
+
+                LastError = null;
+                return true;
             }
             catch (Exception ex)
             {
-                AppLogger.Log("Failed to save config: " + ex.Message);
+                LastError = ex.Message;
+                AppLogger.Log("Failed to save config: " + ex);
+                return false;
             }
         }
 
-        private AppConfig SanitizeAndPersist(AppConfig cfg)
+        private static IEnumerable<(Func<string?> Get, Action<string?> Set)> PathFields(AppConfig config)
         {
-            // Persist cleaned-up names so the (slow) shell name lookup doesn't run again on every load
-            if (SanitizeConfig(cfg)) Save(cfg);
-            return cfg;
+            foreach (var group in config.Groups)
+            {
+                var g = group;
+                yield return (() => g.CustomFolderIconPath, v => g.CustomFolderIconPath = v);
+                if (g.Items == null) continue;
+                foreach (var item in g.Items)
+                {
+                    var i = item;
+                    yield return (() => i.TargetPath, v => i.TargetPath = v ?? string.Empty);
+                    yield return (() => i.CustomIconPath, v => i.CustomIconPath = v);
+                }
+            }
         }
 
+        /// <summary>Replaces the data-folder prefix with the token; returns an action that undoes it.</summary>
+        private Action CollapseDataPaths(AppConfig config)
+        {
+            string prefix = _dir + "\\";
+            var undo = new List<Action>();
+            foreach (var (get, set) in PathFields(config).ToList())
+            {
+                string? value = get();
+                if (value == null || !value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                set(DataDirToken + "\\" + value.Substring(prefix.Length));
+                undo.Add(() => set(value));
+            }
+            return () => undo.ForEach(u => u());
+        }
+
+        /// <summary>
+        /// Expands the token, and rebases absolute paths written by older versions (or by a portable copy on
+        /// another drive letter) whose file now lives under this data folder.
+        /// </summary>
+        internal void ExpandDataPaths(AppConfig config)
+        {
+            foreach (var (get, set) in PathFields(config).ToList())
+            {
+                string? value = get();
+                if (string.IsNullOrEmpty(value)) continue;
+
+                if (value!.StartsWith(DataDirToken, StringComparison.OrdinalIgnoreCase))
+                {
+                    set(_dir + value.Substring(DataDirToken.Length));
+                    continue;
+                }
+
+                if (File.Exists(value)) continue;
+                foreach (var marker in new[] { "\\Links\\", "\\Icons\\" })
+                {
+                    int idx = value.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                    if (idx < 0) continue;
+                    string candidate = _dir + value.Substring(idx);
+                    if (File.Exists(candidate))
+                    {
+                        set(candidate);
+                        break;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Cheap clean-ups done on every load (no COM, no disk scans: this runs before the first flyout).
+        /// </summary>
         /// <returns>true if anything was changed.</returns>
         internal static bool SanitizeConfig(AppConfig cfg)
         {
@@ -211,28 +309,29 @@ namespace TaskbarGrouper.Services
                         item.Name = item.Name.Substring(9).Trim();
                         changed = true;
                     }
-
-                    if (item.Kind == ItemKind.ShellApp || (item.TargetPath != null && item.TargetPath.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        string current = item.Name ?? string.Empty;
-                        if (string.IsNullOrWhiteSpace(current) ||
-                            current.Contains("!") ||
-                            current.StartsWith("com.", StringComparison.OrdinalIgnoreCase) ||
-                            current.StartsWith("electron.", StringComparison.OrdinalIgnoreCase) ||
-                            current.Equals("Microsoft", StringComparison.OrdinalIgnoreCase) ||
-                            current.StartsWith("Claude_", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string? friendly = ShortcutService.ResolveShellAppDisplayName(item.TargetPath!);
-                            if (!string.IsNullOrWhiteSpace(friendly) && friendly != item.Name)
-                            {
-                                item.Name = friendly!;
-                                changed = true;
-                            }
-                        }
-                    }
                 }
             }
             return changed;
+        }
+
+        /// <summary>
+        /// Store apps imported by older versions can carry a package id ("com.lencx.chatgpt") as their name.
+        /// Resolving the friendly name enumerates the whole AppsFolder, so it runs in the background.
+        /// </summary>
+        public static bool NeedsFriendlyName(GroupItem item)
+        {
+            if (!(item.Kind == ItemKind.ShellApp ||
+                  (item.TargetPath != null && item.TargetPath.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase))))
+            {
+                return false;
+            }
+            string current = item.Name ?? string.Empty;
+            return string.IsNullOrWhiteSpace(current) ||
+                   current.Contains("!") ||
+                   current.StartsWith("com.", StringComparison.OrdinalIgnoreCase) ||
+                   current.StartsWith("electron.", StringComparison.OrdinalIgnoreCase) ||
+                   current.Equals("Microsoft", StringComparison.OrdinalIgnoreCase) ||
+                   current.StartsWith("Claude_", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

@@ -4,6 +4,10 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Write-Host "1/3 Compiling StackBar (.NET Framework 4.8)..." -ForegroundColor Cyan
 $buildOutDir = Join-Path $root "src\TaskbarGrouper\bin\Release\net48"
 dotnet build "$root\src\TaskbarGrouper\TaskbarGrouper.csproj" -c Release --no-restore
+# $ErrorActionPreference does not cover native exit codes in Windows PowerShell 5.1:
+# without this check a failed build would package the previous exe and still print "Success!"
+if ($LASTEXITCODE -ne 0) { throw "Build failed (exit code $LASTEXITCODE); nothing was packaged." }
+if (-not (Test-Path (Join-Path $buildOutDir "StackBar.exe"))) { throw "Build output not found in $buildOutDir" }
 
 Write-Host "2/3 Staging standalone artifacts..." -ForegroundColor Cyan
 $artifactsDir = Join-Path $root "artifacts"

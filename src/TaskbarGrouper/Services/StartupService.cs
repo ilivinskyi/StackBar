@@ -1,6 +1,5 @@
 using System;
 using Microsoft.Win32;
-using TaskbarGrouper.Services;
 
 namespace TaskbarGrouper.Services
 {
@@ -9,46 +8,62 @@ namespace TaskbarGrouper.Services
         private const string RunRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string AppValueName = "StackBar";
 
-        public static bool IsRunAtStartupEnabled()
+        public enum StartupState
+        {
+            Off,
+            /// <summary>Registered and pointing at this exe.</summary>
+            On,
+            /// <summary>Registered, but for another (old or moved) exe: startup is effectively broken.</summary>
+            Stale
+        }
+
+        public static StartupState GetState()
         {
             try
             {
                 using (var key = Registry.CurrentUser.OpenSubKey(RunRegistryPath, false))
                 {
-                    var val = key?.GetValue(AppValueName) as string;
-                    return !string.IsNullOrWhiteSpace(val);
+                    return ClassifyCommand(key?.GetValue(AppValueName) as string, AppInfo.ExePath);
                 }
             }
             catch
             {
-                return false;
+                return StartupState.Off;
             }
         }
 
-        public static void SetRunAtStartup(bool enable)
+        internal static StartupState ClassifyCommand(string? command, string exePath)
+        {
+            if (string.IsNullOrWhiteSpace(command)) return StartupState.Off;
+            return command!.IndexOf("\"" + exePath + "\"", StringComparison.OrdinalIgnoreCase) >= 0
+                ? StartupState.On
+                : StartupState.Stale;
+        }
+
+        /// <returns>false if the registry could not be changed.</returns>
+        public static bool SetRunAtStartup(bool enable)
         {
             try
             {
                 using (var key = Registry.CurrentUser.OpenSubKey(RunRegistryPath, true))
                 {
-                    if (key == null) return;
+                    if (key == null) return false;
 
                     if (enable)
                     {
-                        string exePath = AppInfo.ExePath;
-                        if (!string.IsNullOrEmpty(exePath))
-                        {
-                            key.SetValue(AppValueName, $"\"{exePath}\" --tray");
-                        }
+                        key.SetValue(AppValueName, $"\"{AppInfo.ExePath}\" --tray");
                     }
                     else
                     {
                         key.DeleteValue(AppValueName, false);
                     }
                 }
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Log("Could not change Windows startup registration: " + ex.Message);
+                return false;
             }
         }
     }

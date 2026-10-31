@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -20,7 +21,7 @@ namespace TaskbarGrouper
         private FlyoutWindow? _activeFlyout;
         private bool _isExiting;
         private string? _lastClosedGroupId;
-        private DateTime _lastClosedTime = DateTime.MinValue;
+        private DateTime? _lastClosedTimeUtc;
 
         public void RunApplication(string? groupId, bool startMinimized, bool isSetup, bool isUninstall)
         {
@@ -59,10 +60,12 @@ namespace TaskbarGrouper
             _configService = new ConfigService();
             _config = _configService.LoadOrCreateDefault();
 
-            // Cheap (a few file copies, once) and must finish before any flyout launches an item
-            if (ShortcutService.MigrateFlatLinkCopies(_config, _configService.AppDataDirectory))
+            // Cheap (a few file copies, once) and must finish before any flyout launches an item.
+            // The old copies are deleted only once the config pointing at the new ones is safely on disk.
+            if (ShortcutService.MigrateFlatLinkCopies(_config, _configService.AppDataDirectory, out var obsoleteCopies) &&
+                _configService.Save(_config))
             {
-                _configService.Save(_config);
+                ShortcutService.DeleteFiles(obsoleteCopies);
             }
 
             // Start resident IPC listener
@@ -91,18 +94,41 @@ namespace TaskbarGrouper
         {
             try
             {
-                ShortcutService.HealPinnedTaskbarShortcuts(_config, _configService.AppDataDirectory);
-                if (ShortcutService.MigrateLegacyPinnedTargets(_config, _configService))
+                // One-time: may scan every installed app, so it must not run again on each start
+                if (_config.MigrationVersion < AppConfig.CurrentMigrationVersion)
                 {
-                    _configService.RaiseGroupChanged(string.Empty);
+                    if (ShortcutService.MigrateLegacyPinnedTargets(_config, _configService))
+                    {
+                        _configService.RaiseGroupChanged(string.Empty);
+                    }
+                    _config.MigrationVersion = AppConfig.CurrentMigrationVersion;
+                    _configService.Save(_config);
                 }
 
-                // StackBar's own copies are always kept current; other apps' shortcuts only if the user allows it
-                ShortcutRepairService.RefreshOwnCopies(_config);
-                if (_config.RepairAppShortcuts)
+                // Everything else touches many files over COM: run it off the UI thread, on independent copies
+                var groups = _config.Groups.Select(g => g.CloneForReading()).ToList();
+                var itemPaths = groups.SelectMany(g => g.Items).Select(i => i.TargetPath).ToList();
+                var technicalNames = groups.SelectMany(g => g.Items).Where(ConfigService.NeedsFriendlyName)
+                    .Select(i => i.TargetPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                bool repairAppShortcuts = _config.RepairAppShortcuts;
+                string dataDir = _configService.AppDataDirectory;
+
+                RunOnStaThread(() =>
                 {
-                    ShortcutRepairService.WarmIndexInBackground();
-                }
+                    ShortcutService.HealPinnedTaskbarShortcuts(groups, dataDir);
+                    // StackBar's own copies are always kept current; other apps' shortcuts only if the user allows it
+                    ShortcutRepairService.RefreshOwnCopies(itemPaths, dataDir);
+                    if (repairAppShortcuts) ShortcutRepairService.RefreshIndexInBackground();
+
+                    var resolved = technicalNames
+                        .Select(t => new { Target = t, Name = ShortcutService.ResolveShellAppDisplayName(t) })
+                        .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+                        .ToDictionary(x => x.Target, x => x.Name!, StringComparer.OrdinalIgnoreCase);
+                    if (resolved.Count > 0)
+                    {
+                        Dispatcher.BeginInvoke(new Action(() => ApplyFriendlyNames(resolved)));
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -110,16 +136,65 @@ namespace TaskbarGrouper
             }
         }
 
-        private void OnIpcOpenGroupRequested(string groupId, int cursorX, int cursorY)
+        private static void RunOnStaThread(Action work)
         {
-            Dispatcher.BeginInvoke(new Action(() => OpenGroupFlyout(groupId, cursorX, cursorY)));
+            var thread = new System.Threading.Thread(() =>
+            {
+                try { work(); }
+                catch (Exception ex) { AppLogger.Log("Background maintenance failed: " + ex); }
+            })
+            {
+                IsBackground = true,
+                Name = "StackBar_Maintenance"
+            };
+            // Shell.Application and the shell link objects are apartment-threaded COM
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
         }
 
-        private void OpenGroupFlyout(string groupId, int cursorX, int cursorY)
+        private void ApplyFriendlyNames(Dictionary<string, string> namesByTarget)
         {
-            // Click-to-toggle: if the same group's flyout just closed (because the pin click deactivated it), keep it closed
+            bool changed = false;
+            foreach (var item in _config.Groups.SelectMany(g => g.Items))
+            {
+                if (ConfigService.NeedsFriendlyName(item) && namesByTarget.TryGetValue(item.TargetPath, out var name) && name != item.Name)
+                {
+                    item.Name = name;
+                    changed = true;
+                }
+            }
+            if (changed && _configService.Save(_config))
+            {
+                _configService.RaiseGroupChanged(string.Empty);
+            }
+        }
+
+        private void OnIpcOpenGroupRequested(string groupId, int cursorX, int cursorY, DateTime? clientStartUtc)
+        {
+            Dispatcher.BeginInvoke(new Action(() => OpenGroupFlyout(groupId, cursorX, cursorY, clientStartUtc)));
+        }
+
+        /// <summary>
+        /// Clicking the pin while the flyout is open must close it, not reopen it. The click first deactivates
+        /// (closes) the flyout, then Explorer starts a new StackBar process that sends OPEN. That can take well
+        /// over half a second on a busy machine, so instead of a fixed window the client's own start time is
+        /// used: a close that happened around or after the client started was caused by the same click.
+        /// </summary>
+        internal static bool IsToggleClose(DateTime? lastClosedUtc, DateTime? clientStartUtc, DateTime nowUtc)
+        {
+            if (!lastClosedUtc.HasValue) return false;
+            if (clientStartUtc.HasValue)
+            {
+                return lastClosedUtc.Value >= clientStartUtc.Value - TimeSpan.FromSeconds(1) &&
+                       nowUtc - lastClosedUtc.Value < TimeSpan.FromSeconds(15);
+            }
+            return nowUtc - lastClosedUtc.Value < TimeSpan.FromMilliseconds(500); // older clients send no start time
+        }
+
+        private void OpenGroupFlyout(string groupId, int cursorX, int cursorY, DateTime? clientStartUtc = null)
+        {
             if (string.Equals(_lastClosedGroupId, groupId, StringComparison.OrdinalIgnoreCase) &&
-                (DateTime.Now - _lastClosedTime).TotalMilliseconds < 500)
+                IsToggleClose(_lastClosedTimeUtc, clientStartUtc, DateTime.UtcNow))
             {
                 _lastClosedGroupId = null;
                 return;
@@ -144,7 +219,7 @@ namespace TaskbarGrouper
             flyout.Closed += (_, __) =>
             {
                 _lastClosedGroupId = groupId;
-                _lastClosedTime = DateTime.Now;
+                _lastClosedTimeUtc = DateTime.UtcNow;
                 if (_activeFlyout == flyout) _activeFlyout = null;
             };
             flyout.Show();

@@ -115,6 +115,13 @@ namespace TaskbarGrouper.Services
 
         public static Bitmap? ExtractBitmap(string targetPath, string? customIconPath = null, int iconIndex = 0)
         {
+            return ExtractBitmap(targetPath, customIconPath, iconIndex, depth: 0);
+        }
+
+        // depth: the .lnk fallback follows a shortcut's icon location, which can itself be a .lnk; two shortcuts
+        // pointing at each other would otherwise recurse until a StackOverflowException kills the app
+        private static Bitmap? ExtractBitmap(string targetPath, string? customIconPath, int iconIndex, int depth)
+        {
             bool useCustom = !string.IsNullOrWhiteSpace(customIconPath) && File.Exists(customIconPath);
             string path = useCustom ? customIconPath! : targetPath;
             if (!useCustom) iconIndex = 0;
@@ -242,7 +249,7 @@ namespace TaskbarGrouper.Services
                     var item = ShortcutService.ParseShortcut(path);
                     if (!string.IsNullOrWhiteSpace(item.CustomIconPath) && !item.CustomIconPath!.Equals(path, StringComparison.OrdinalIgnoreCase) && File.Exists(item.CustomIconPath))
                     {
-                        var bmp = ExtractBitmap(item.CustomIconPath!, item.CustomIconPath, item.CustomIconIndex);
+                        var bmp = depth < 2 ? ExtractBitmap(item.CustomIconPath!, item.CustomIconPath, item.CustomIconIndex, depth + 1) : null;
                         if (bmp != null) return bmp;
                     }
                 }

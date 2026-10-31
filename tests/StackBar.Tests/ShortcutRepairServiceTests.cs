@@ -12,7 +12,7 @@ using Xunit;
 
 namespace StackBar.Tests
 {
-    // Shortcut repair touches a process-wide index; keep these tests from running in parallel with each other
+    // Shortcut repair touches process-wide state; keep these tests from running in parallel with each other
     [Collection("ShortcutRepair")]
     public class ShortcutRepairServiceTests : IDisposable
     {
@@ -21,14 +21,19 @@ namespace StackBar.Tests
         public ShortcutRepairServiceTests()
         {
             AppLogger.Initialize(Path.Combine(Path.GetTempPath(), "StackBarTests_logs"));
+            // Never scan (and possibly modify) the developer's real Start Menu: every test starts with no folders
+            ShortcutRepairService.RegisteredShortcutFolders = () => Enumerable.Empty<string>();
+            ShortcutRepairService.ResetState();
         }
 
         public void Dispose()
         {
             ShortcutRepairService.RegisteredShortcutFolders = () => Enumerable.Empty<string>();
-            ShortcutRepairService.ResetIndex();
+            ShortcutRepairService.ResetState();
             _dir.Dispose();
         }
+
+        private string AppData => _dir.File("appdata");
 
         private string CreateTarget(string name, int size)
         {
@@ -45,9 +50,10 @@ namespace StackBar.Tests
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(5));
         }
 
-        private string CreateLink(string lnkName, string target, string? aumid = null, string? arguments = null, string? description = null)
+        private string CreateLink(string relativePath, string target, string? aumid = null, string? arguments = null, string? description = null)
         {
-            string lnk = _dir.File(lnkName);
+            string lnk = _dir.File(relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(lnk)!);
             var link = (ShortcutService.IShellLinkW)new ShortcutService.ShellLink();
             try
             {
@@ -83,16 +89,19 @@ namespace StackBar.Tests
                 link.GetArguments(args, args.Capacity);
                 var desc = new StringBuilder(1024);
                 link.GetDescription(desc, desc.Capacity);
-                string? aumid = null;
-                var key = ShortcutService.AppUserModelIdKey;
-                if (((ShortcutService.IPropertyStore)link).GetValue(ref key, out var value) == 0 && value.vt == 31)
-                    aumid = Marshal.PtrToStringUni(value.pwszVal);
-                return (args.ToString(), desc.ToString(), aumid);
+                return (args.ToString(), desc.ToString(), ShortcutService.ReadAppUserModelId(link));
             }
             finally
             {
                 Marshal.FinalReleaseComObject(link);
             }
+        }
+
+        private void UseStartMenu(string folder)
+        {
+            ShortcutRepairService.RegisteredShortcutFolders = () => new[] { folder };
+            // Build the index up front: the launch path itself never scans
+            ShortcutRepairService.FindRegisteredShortcuts("warm-up", null).ToList();
         }
 
         [Fact]
@@ -102,7 +111,7 @@ namespace StackBar.Tests
             string lnk = CreateLink("App.lnk", target);
 
             Assert.False(ShortcutRepairService.IsStale(lnk));
-            Assert.Null(ShortcutRepairService.RepairIfStale(lnk, _dir.File("backups")));
+            Assert.Equal(ShortcutRepairService.RepairOutcome.NotNeeded, ShortcutRepairService.RepairIfStale(lnk, _dir.File("backups")));
         }
 
         [Fact]
@@ -141,12 +150,70 @@ namespace StackBar.Tests
             UpdateInPlace(target, 2500);
             string backups = _dir.File("backups");
 
-            Assert.True(ShortcutRepairService.RepairIfStale(lnk, backups));
+            Assert.Equal(ShortcutRepairService.RepairOutcome.Repaired, ShortcutRepairService.RepairIfStale(lnk, backups));
 
-            string backup = Assert.Single(Directory.GetFiles(backups));
+            string backup = Assert.Single(Directory.GetFiles(backups, "*.lnk"));
             Assert.EndsWith("_App.lnk", backup);
             Assert.Equal(original, File.ReadAllBytes(backup));
+            Assert.Contains(Path.GetFullPath(lnk), File.ReadAllText(Path.Combine(backups, "backups.tsv")));
             Assert.False(ShortcutRepairService.IsStale(lnk));
+        }
+
+        [Fact]
+        public void Backups_of_same_named_shortcuts_from_different_folders_never_overwrite_each_other()
+        {
+            string target = CreateTarget("app.exe", 1000);
+            string startMenu = CreateLink(Path.Combine("StartMenu", "App.lnk"), target);
+            string pinned = CreateLink(Path.Combine("Pinned", "App.lnk"), target);
+            byte[] startMenuOriginal = File.ReadAllBytes(startMenu);
+            byte[] pinnedOriginal = File.ReadAllBytes(pinned);
+            UpdateInPlace(target, 2500);
+            string backups = _dir.File("backups");
+
+            ShortcutRepairService.RepairIfStale(startMenu, backups);
+            ShortcutRepairService.RepairIfStale(pinned, backups);
+
+            var saved = Directory.GetFiles(backups, "*.lnk").Select(File.ReadAllBytes).ToList();
+            Assert.Equal(2, saved.Count);
+            Assert.Contains(saved, b => b.SequenceEqual(startMenuOriginal));
+            Assert.Contains(saved, b => b.SequenceEqual(pinnedOriginal));
+        }
+
+        [Fact]
+        public void Read_only_shortcuts_are_skipped_without_a_backup_and_not_retried()
+        {
+            string target = CreateTarget("app.exe", 1000);
+            string lnk = CreateLink("App.lnk", target);
+            UpdateInPlace(target, 2500);
+            File.SetAttributes(lnk, FileAttributes.ReadOnly);
+            string backups = _dir.File("backups");
+            try
+            {
+                Assert.Equal(ShortcutRepairService.RepairOutcome.Skipped, ShortcutRepairService.RepairIfStale(lnk, backups));
+                Assert.Equal(ShortcutRepairService.RepairOutcome.Skipped, ShortcutRepairService.RepairIfStale(lnk, backups));
+                Assert.False(Directory.Exists(backups) && Directory.GetFiles(backups, "*.lnk").Any());
+            }
+            finally
+            {
+                File.SetAttributes(lnk, FileAttributes.Normal);
+            }
+        }
+
+        [Fact]
+        public void PruneBackups_keeps_the_folder_bounded()
+        {
+            string backups = _dir.File("backups");
+            Directory.CreateDirectory(backups);
+            string old = Path.Combine(backups, "old.lnk");
+            File.WriteAllText(old, "x");
+            File.SetCreationTimeUtc(old, DateTime.UtcNow.AddDays(-40));
+            string recent = Path.Combine(backups, "recent.lnk");
+            File.WriteAllText(recent, "x");
+
+            ShortcutRepairService.PruneBackups(backups, DateTime.UtcNow);
+
+            Assert.False(File.Exists(old));
+            Assert.True(File.Exists(recent));
         }
 
         [Fact]
@@ -163,23 +230,61 @@ namespace StackBar.Tests
         }
 
         [Fact]
+        public void Only_files_under_the_data_Links_folder_count_as_own_copies()
+        {
+            Assert.True(ShortcutRepairService.IsOwnCopy(Path.Combine(AppData, "Links", "ab12cd34", "App.lnk"), AppData));
+            Assert.False(ShortcutRepairService.IsOwnCopy(_dir.File(@"Desktop\App.lnk"), AppData));
+            Assert.False(ShortcutRepairService.IsOwnCopy(Path.Combine(AppData, "LinksOther", "App.lnk"), AppData));
+        }
+
+        [Fact]
         public void PrepareLaunch_repairs_the_apps_registered_shortcut_found_by_app_id()
         {
             string target = CreateTarget("app.exe", 1000);
-            string startMenu = Path.Combine(_dir.Path, "StartMenu");
-            Directory.CreateDirectory(startMenu);
             string registered = CreateLink(Path.Combine("StartMenu", "App.lnk"), target, aumid: "Vendor.App");
-            string ownCopy = CreateLink("OwnCopy.lnk", target, aumid: "Vendor.App");
+            string ownCopy = CreateLink(Path.Combine("appdata", "Links", "ab12cd34", "App.lnk"), target, aumid: "Vendor.App");
             UpdateInPlace(target, 2500);
+            UseStartMenu(_dir.File("StartMenu"));
 
-            ShortcutRepairService.RegisteredShortcutFolders = () => new[] { startMenu };
-            ShortcutRepairService.ResetIndex();
-            string appData = _dir.File("appdata");
-            ShortcutRepairService.PrepareLaunch(new GroupItem { TargetPath = ownCopy, Kind = ItemKind.Shortcut }, appData);
+            ShortcutRepairService.PrepareLaunch(new GroupItem { TargetPath = ownCopy, Kind = ItemKind.Shortcut }, AppData, repairAppShortcuts: true);
 
             Assert.False(ShortcutRepairService.IsStale(ownCopy));
             Assert.False(ShortcutRepairService.IsStale(registered));
-            Assert.Single(Directory.GetFiles(ShortcutRepairService.BackupDirectory(appData))); // only the other app's file is backed up
+            // Only the other app's file is backed up; StackBar's own copy needs none
+            Assert.Single(Directory.GetFiles(ShortcutRepairService.BackupDirectory(AppData), "*.lnk"));
+        }
+
+        [Fact]
+        public void PrepareLaunch_with_the_setting_off_touches_only_StackBars_own_copy()
+        {
+            string target = CreateTarget("app.exe", 1000);
+            string registered = CreateLink(Path.Combine("StartMenu", "App.lnk"), target, aumid: "Vendor.App");
+            string ownCopy = CreateLink(Path.Combine("appdata", "Links", "ab12cd34", "App.lnk"), target, aumid: "Vendor.App");
+            string desktopItem = CreateLink(Path.Combine("Desktop", "App.lnk"), target, aumid: "Vendor.App");
+            UpdateInPlace(target, 2500);
+            UseStartMenu(_dir.File("StartMenu"));
+
+            ShortcutRepairService.PrepareLaunch(new GroupItem { TargetPath = ownCopy, Kind = ItemKind.Shortcut }, AppData, repairAppShortcuts: false);
+            ShortcutRepairService.PrepareLaunch(new GroupItem { TargetPath = desktopItem, Kind = ItemKind.Shortcut }, AppData, repairAppShortcuts: false);
+
+            Assert.False(ShortcutRepairService.IsStale(ownCopy));
+            Assert.True(ShortcutRepairService.IsStale(registered));
+            Assert.True(ShortcutRepairService.IsStale(desktopItem));
+        }
+
+        [Fact]
+        public void PrepareLaunch_without_an_index_does_not_scan_and_skips_registered_shortcuts()
+        {
+            string target = CreateTarget("app.exe", 1000);
+            string registered = CreateLink(Path.Combine("StartMenu", "App.lnk"), target, aumid: "Vendor.App");
+            UpdateInPlace(target, 2500);
+            ShortcutRepairService.RegisteredShortcutFolders = () => new[] { _dir.File("StartMenu") };
+            ShortcutRepairService.ResetState(); // no index yet
+
+            ShortcutRepairService.PrepareLaunch(new GroupItem { TargetPath = target, Kind = ItemKind.File }, AppData, repairAppShortcuts: true);
+
+            Assert.True(ShortcutRepairService.IsStale(registered));
+            Thread.Sleep(500); // let the background refresh it started finish before the folder is deleted
         }
 
         [Fact]
@@ -187,35 +292,39 @@ namespace StackBar.Tests
         {
             string target = CreateTarget("app.exe", 1000);
             string other = CreateTarget("other.exe", 1000);
-            string startMenu = Path.Combine(_dir.Path, "StartMenu");
-            Directory.CreateDirectory(startMenu);
             string unrelated = CreateLink(Path.Combine("StartMenu", "Other.lnk"), other, aumid: "Vendor.Other");
             UpdateInPlace(other, 2500);
+            UseStartMenu(_dir.File("StartMenu"));
 
-            ShortcutRepairService.RegisteredShortcutFolders = () => new[] { startMenu };
-            ShortcutRepairService.ResetIndex();
-            ShortcutRepairService.PrepareLaunch(new GroupItem { TargetPath = target, Kind = ItemKind.File }, _dir.File("appdata"));
+            ShortcutRepairService.PrepareLaunch(new GroupItem { TargetPath = target, Kind = ItemKind.File }, AppData, repairAppShortcuts: true);
 
             Assert.True(ShortcutRepairService.IsStale(unrelated));
         }
 
         [Fact]
-        public void RepairAll_reports_repaired_shortcuts()
+        public void RepairAll_reports_repaired_and_skipped_shortcuts()
         {
             string target = CreateTarget("app.exe", 1000);
-            string startMenu = Path.Combine(_dir.Path, "StartMenu");
-            Directory.CreateDirectory(startMenu);
             string registered = CreateLink(Path.Combine("StartMenu", "App.lnk"), target);
+            string readOnly = CreateLink(Path.Combine("StartMenu", "Locked.lnk"), target);
             string fresh = CreateLink(Path.Combine("StartMenu", "Fresh.lnk"), CreateTarget("fresh.exe", 10));
             UpdateInPlace(target, 2500);
+            File.SetAttributes(readOnly, FileAttributes.ReadOnly);
+            ShortcutRepairService.RegisteredShortcutFolders = () => new[] { _dir.File("StartMenu") };
+            try
+            {
+                var report = ShortcutRepairService.RepairAll(new List<string>(), AppData);
 
-            ShortcutRepairService.RegisteredShortcutFolders = () => new[] { startMenu };
-            var report = ShortcutRepairService.RepairAll(new AppConfig(), _dir.File("appdata"));
-
-            Assert.Equal(2, report.Checked);
-            Assert.Equal(new List<string> { registered }, report.Repaired);
-            Assert.Empty(report.Failed);
-            Assert.False(ShortcutRepairService.IsStale(fresh));
+                Assert.Equal(3, report.Checked);
+                Assert.Equal(new List<string> { registered }, report.Repaired);
+                Assert.Equal(new List<string> { readOnly }, report.Skipped);
+                Assert.Empty(report.Failed);
+                Assert.False(ShortcutRepairService.IsStale(fresh));
+            }
+            finally
+            {
+                File.SetAttributes(readOnly, FileAttributes.Normal);
+            }
         }
     }
 }

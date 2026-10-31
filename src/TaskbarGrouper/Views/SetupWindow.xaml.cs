@@ -10,19 +10,25 @@ namespace TaskbarGrouper.Views
     public partial class SetupWindow : Window
     {
         private string _installDir;
+        // Where StackBar is installed right now (before this run), to detect a move to another folder
+        private readonly string _previousInstallDir;
 
         private const string UninstallKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\StackBar";
 
         public SetupWindow()
         {
             InitializeComponent();
-            _installDir = GetInstalledDirectory();
+            _previousInstallDir = GetInstalledDirectory();
+            _installDir = _previousInstallDir;
+            UpdateModeUi();
+        }
 
+        private bool IsInstalledIn(string dir) => File.Exists(Path.Combine(dir, InstallLocation.ExeName));
+
+        private void UpdateModeUi()
+        {
             StatusLabel.Text = _installDir;
-
-            // Check if already installed
-            string targetExe = Path.Combine(_installDir, "StackBar.exe");
-            if (File.Exists(targetExe))
+            if (IsInstalledIn(_installDir))
             {
                 SetupTitle.Text = "Update / Reinstall StackBar";
                 InstallBtn.Content = "Update StackBar";
@@ -32,7 +38,8 @@ namespace TaskbarGrouper.Views
             {
                 SetupTitle.Text = "Install StackBar";
                 InstallBtn.Content = "Install & Launch";
-                UninstallBtn.Visibility = Visibility.Collapsed;
+                // Uninstall still makes sense for an existing install elsewhere
+                UninstallBtn.Visibility = IsInstalledIn(_previousInstallDir) ? Visibility.Visible : Visibility.Collapsed;
             }
         }
 
@@ -44,8 +51,9 @@ namespace TaskbarGrouper.Views
                 fbd.SelectedPath = _installDir;
                 if (fbd.ShowDialog() == System.Windows.Forms.DialogResult.OK && !string.IsNullOrWhiteSpace(fbd.SelectedPath))
                 {
-                    _installDir = fbd.SelectedPath;
-                    StatusLabel.Text = _installDir;
+                    // A non-empty or system folder gets a StackBar subfolder: never install among unrelated files
+                    _installDir = InstallLocation.ResolveChosenFolder(fbd.SelectedPath);
+                    UpdateModeUi();
                 }
             }
         }
@@ -57,10 +65,10 @@ namespace TaskbarGrouper.Views
 
             try
             {
-                StopRunningInstances();
+                StopRunningInstances(_installDir, _previousInstallDir);
 
                 Directory.CreateDirectory(_installDir);
-                string targetExe = Path.Combine(_installDir, "StackBar.exe");
+                string targetExe = Path.Combine(_installDir, InstallLocation.ExeName);
 
                 // Copy self
                 string currentExe = AppInfo.ExePath;
@@ -107,6 +115,8 @@ namespace TaskbarGrouper.Views
                     uninst.SetValue("NoRepair", 1, RegistryValueKind.DWord);
                 }
 
+                OfferToRemovePreviousCopy(targetExe);
+
                 if (launchNow)
                 {
                     StatusLabel.Text = "Launching StackBar...";
@@ -123,6 +133,33 @@ namespace TaskbarGrouper.Views
             {
                 MessageBox.Show($"Installation failed:\n{ex.Message}", "StackBar Setup", MessageBoxButton.OK, MessageBoxImage.Error);
                 InstallBtn.IsEnabled = true;
+            }
+        }
+
+        /// <summary>Installing into a different folder than before would otherwise leave the old copy behind.</summary>
+        private void OfferToRemovePreviousCopy(string newExe)
+        {
+            string oldExe = Path.Combine(_previousInstallDir, InstallLocation.ExeName);
+            if (string.Equals(Path.GetFullPath(oldExe), Path.GetFullPath(newExe), StringComparison.OrdinalIgnoreCase) || !File.Exists(oldExe)) return;
+
+            var answer = MessageBox.Show(
+                $"StackBar was previously installed in:\n{_previousInstallDir}\n\nRemove that old copy?",
+                "StackBar Setup", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes) return;
+
+            try
+            {
+                // Same rule as the uninstaller: StackBar.exe only, then the folder only if nothing else is in it
+                if (!InstallLocation.IsSafeToClean(_previousInstallDir, out _)) return;
+                File.Delete(oldExe);
+                if (Directory.GetFileSystemEntries(_previousInstallDir).Length == 0)
+                {
+                    Directory.Delete(_previousInstallDir);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not remove the old copy:\n" + ex.Message, "StackBar Setup", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
 
@@ -144,9 +181,8 @@ namespace TaskbarGrouper.Views
 
                 if (result != MessageBoxResult.Yes) return;
 
-                StopRunningInstances();
-
                 string installDir = GetInstalledDirectory();
+                StopRunningInstances(installDir);
 
                 string desktopLnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "StackBar.lnk");
                 if (File.Exists(desktopLnk)) File.Delete(desktopLnk);
@@ -168,11 +204,16 @@ namespace TaskbarGrouper.Views
                     if (Directory.Exists(appData)) Directory.Delete(appData, true);
                 }
 
-                MessageBox.Show("StackBar has been completely uninstalled.", "StackBar", MessageBoxButton.OK, MessageBoxImage.Information);
+                bool cleanup = InstallLocation.IsSafeToClean(installDir, out string reason);
+                MessageBox.Show(
+                    cleanup
+                        ? $"StackBar has been uninstalled.\n\nStackBar.exe is removed from\n{installDir}\nas soon as this window closes (the folder too, if nothing else is in it)."
+                        : $"StackBar has been uninstalled, but its program file was left in place ({reason}):\n{installDir}",
+                    "StackBar", MessageBoxButton.OK, MessageBoxImage.Information);
 
                 // Started last: the uninstaller usually runs from inside the install folder, and its exe
                 // can only be deleted after this process has exited.
-                ScheduleDirectoryDeletionAfterExit(installDir);
+                if (cleanup) ScheduleCleanupAfterExit(installDir);
             }
             catch (Exception ex)
             {
@@ -201,43 +242,49 @@ namespace TaskbarGrouper.Views
         }
 
         /// <summary>
-        /// Closes the resident app (gracefully via IPC, then forcefully). Never touches the current process:
-        /// the uninstaller registered in Windows is StackBar.exe itself and would otherwise kill itself.
+        /// Closes the resident app (gracefully via IPC, then forcefully). Only processes running from the
+        /// install folder(s) in this Windows session are killed; dev builds, portable copies and the current
+        /// process (the uninstaller registered in Windows is StackBar.exe itself) are left alone.
         /// </summary>
-        private static void StopRunningInstances()
+        private static void StopRunningInstances(params string[] installDirs)
         {
             IpcService.SendCommand("EXIT");
             System.Threading.Thread.Sleep(300);
 
-            int selfId = Process.GetCurrentProcess().Id;
+            var self = Process.GetCurrentProcess();
             foreach (var proc in Process.GetProcessesByName("StackBar"))
             {
                 using (proc)
                 {
-                    if (proc.Id == selfId) continue;
-                    try { proc.Kill(); proc.WaitForExit(2000); } catch { }
+                    try
+                    {
+                        if (proc.Id == self.Id || proc.SessionId != self.SessionId) continue;
+                        string? image = proc.MainModule?.FileName;
+                        bool installed = false;
+                        foreach (var dir in installDirs)
+                        {
+                            if (InstallLocation.IsInFolder(image, dir)) installed = true;
+                        }
+                        if (!installed) continue;
+
+                        proc.Kill();
+                        proc.WaitForExit(2000);
+                    }
+                    catch { }
                 }
             }
         }
 
-        internal static void ScheduleDirectoryDeletionAfterExit(string directory)
+        private static void ScheduleCleanupAfterExit(string directory)
         {
-            if (!Directory.Exists(directory)) return;
-
-            int selfId = Process.GetCurrentProcess().Id;
-            string escapedDir = directory.Replace("'", "''");
-            string script = $"Wait-Process -Id {selfId} -ErrorAction SilentlyContinue; " +
-                            $"Start-Sleep -Milliseconds 500; " +
-                            $"Remove-Item -LiteralPath '{escapedDir}' -Recurse -Force -ErrorAction SilentlyContinue";
-
             Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"{script}\"",
+                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"{InstallLocation.BuildCleanupScript(directory, Process.GetCurrentProcess().Id)}\"",
                 WindowStyle = ProcessWindowStyle.Hidden,
                 CreateNoWindow = true,
                 UseShellExecute = false,
-                // Not inside the folder being deleted, or the helper itself would keep it locked
+                // Not inside the folder being cleaned, or the helper itself would keep it locked
                 WorkingDirectory = Path.GetTempPath()
             });
         }

@@ -82,7 +82,25 @@ namespace TaskbarGrouper.Services
             pid = 5
         };
 
-        public static string CreateGroupShortcut(AppGroup group, string appDataDir)
+        /// <summary>
+        /// AppUserModelID prefix for pinned stacks of this StackBar edition. A portable copy adds a tag derived
+        /// from its data folder, so the installed and portable editions can tell their pins apart.
+        /// </summary>
+        internal static string GroupAumidPrefix(string appDataDir) => AppInfo.IsPortableMode
+            ? $"StackBar.Portable.{EditionTag(appDataDir)}.Group."
+            : "StackBar.Group.";
+
+        private static string EditionTag(string appDataDir)
+        {
+            using (var sha = System.Security.Cryptography.SHA1.Create())
+            {
+                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(appDataDir).TrimEnd('\\').ToLowerInvariant()));
+                return BitConverter.ToString(hash).Replace("-", "").Substring(0, 8);
+            }
+        }
+
+        /// <param name="nameIsShared">Another stack has the same name: add the id so the files don't overwrite each other.</param>
+        public static string CreateGroupShortcut(AppGroup group, string appDataDir, bool nameIsShared = false)
         {
             string iconsDir = Path.Combine(appDataDir, "Icons");
             string shortcutsDir = Path.Combine(appDataDir, "Shortcuts");
@@ -93,7 +111,7 @@ namespace TaskbarGrouper.Services
             string safeName = string.Join("_", group.Name.Split(Path.GetInvalidFileNameChars())).Trim();
             if (string.IsNullOrEmpty(safeName)) safeName = group.Id;
 
-            string lnkPath = Path.Combine(shortcutsDir, $"{safeName} (StackBar).lnk");
+            string lnkPath = Path.Combine(shortcutsDir, nameIsShared ? $"{safeName} (StackBar, {group.Id}).lnk" : $"{safeName} (StackBar).lnk");
             string exePath = AppInfo.ExePath;
 
             var link = (IShellLinkW)new ShellLink();
@@ -111,7 +129,7 @@ namespace TaskbarGrouper.Services
                     var pv = new PROPVARIANT
                     {
                         vt = 31, // VT_LPWSTR
-                        pwszVal = Marshal.StringToCoTaskMemUni($"StackBar.Group.{group.Id}")
+                        pwszVal = Marshal.StringToCoTaskMemUni(GroupAumidPrefix(appDataDir) + group.Id)
                     };
                     try
                     {
@@ -137,6 +155,8 @@ namespace TaskbarGrouper.Services
         [DllImport("shell32.dll")]
         internal static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 
+        [DllImport("ole32.dll")]
+        private static extern int PropVariantClear(ref PROPVARIANT pvar);
 
         private static string PinnedTaskbarDirectory => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -144,38 +164,69 @@ namespace TaskbarGrouper.Services
 
         /// <summary>
         /// Extracts the group id from shortcut arguments such as <c>--group "abc123"</c>.
-        /// Exact parsing (not a substring search) so id "web" never matches "web-dev".
+        /// "--group" must be a whole argument (so "--groups" doesn't match), and the id is the next argument.
         /// </summary>
         public static bool TryGetGroupIdFromArgs(string? args, out string groupId)
         {
             groupId = string.Empty;
             if (string.IsNullOrWhiteSpace(args)) return false;
 
-            const string flag = "--group";
-            int idx = args!.IndexOf(flag, StringComparison.OrdinalIgnoreCase);
-            if (idx < 0) return false;
+            var tokens = System.Text.RegularExpressions.Regex.Matches(args!, "\"[^\"]*\"?|\\S+")
+                .Cast<System.Text.RegularExpressions.Match>()
+                .Select(m => m.Value)
+                .ToList();
 
-            string rest = args.Substring(idx + flag.Length).TrimStart();
-            if (rest.Length == 0) return false;
-
-            if (rest[0] == '"')
+            for (int i = 0; i < tokens.Count - 1; i++)
             {
-                int end = rest.IndexOf('"', 1);
-                groupId = end > 0 ? rest.Substring(1, end - 1) : rest.Substring(1);
+                if (!tokens[i].Equals("--group", StringComparison.OrdinalIgnoreCase)) continue;
+                groupId = tokens[i + 1].Trim('"').Trim();
+                return groupId.Length > 0;
             }
-            else
-            {
-                int end = rest.IndexOfAny(new[] { ' ', '\t' });
-                groupId = end > 0 ? rest.Substring(0, end) : rest;
-            }
-
-            groupId = groupId.Trim();
-            return groupId.Length > 0;
+            return false;
         }
 
-        private static bool IsShortcutForGroup(string args, string groupId)
+        internal enum PinOwnership
         {
-            return TryGetGroupIdFromArgs(args, out var id) && id.Equals(groupId, StringComparison.OrdinalIgnoreCase);
+            /// <summary>Not a StackBar stack pin of this edition, or one that another existing StackBar copy uses.</summary>
+            NotOurs,
+            /// <summary>Points at this exe.</summary>
+            Ours,
+            /// <summary>One of our pins whose exe no longer exists (StackBar was moved or reinstalled elsewhere).</summary>
+            Orphaned
+        }
+
+        /// <summary>
+        /// Decides whether a pinned shortcut is one of this StackBar's stacks. Arguments alone are not enough:
+        /// a third-party pin could use "--group web", and a portable copy, a dev build or a downloaded exe
+        /// must not take over the installed copy's pins (or the other way round).
+        /// </summary>
+        internal static PinOwnership ClassifyPin(string args, string target, string? aumid, string ourExe, string aumidPrefix, out string groupId)
+        {
+            if (!TryGetGroupIdFromArgs(args, out groupId)) return PinOwnership.NotOurs;
+
+            string fileName = Path.GetFileName(target ?? string.Empty);
+            if (!fileName.StartsWith("StackBar", StringComparison.OrdinalIgnoreCase) ||
+                !fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return PinOwnership.NotOurs;
+            }
+
+            bool isOurExe = string.Equals(target, ourExe, StringComparison.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(aumid))
+            {
+                // Without an app ID we can only be sure about pins that already point at us
+                return isOurExe ? PinOwnership.Ours : PinOwnership.NotOurs;
+            }
+            if (!string.Equals(aumid, aumidPrefix + groupId, StringComparison.OrdinalIgnoreCase))
+            {
+                // Pins created before editions were tagged all use "StackBar.Group.<id>"; keep managing those
+                // only while they already point at this exe
+                bool legacyPin = string.Equals(aumid, "StackBar.Group." + groupId, StringComparison.OrdinalIgnoreCase);
+                return legacyPin && isOurExe ? PinOwnership.Ours : PinOwnership.NotOurs;
+            }
+
+            if (isOurExe) return PinOwnership.Ours;
+            return File.Exists(target) ? PinOwnership.NotOurs : PinOwnership.Orphaned;
         }
 
         private static string ReadLinkArguments(IShellLinkW link)
@@ -183,6 +234,29 @@ namespace TaskbarGrouper.Services
             var argsSb = new StringBuilder(1024);
             link.GetArguments(argsSb, argsSb.Capacity);
             return argsSb.ToString();
+        }
+
+        private static PinOwnership ClassifyLoadedPin(IShellLinkW link, string appDataDir, out string groupId)
+        {
+            var pathSb = new StringBuilder(1024);
+            link.GetPath(pathSb, pathSb.Capacity, IntPtr.Zero, 0);
+            return ClassifyPin(ReadLinkArguments(link), pathSb.ToString(), ReadAppUserModelId(link), AppInfo.ExePath,
+                GroupAumidPrefix(appDataDir), out groupId);
+        }
+
+        internal static string? ReadAppUserModelId(object link)
+        {
+            if (!(link is IPropertyStore store)) return null;
+            var key = AppUserModelIdKey;
+            if (store.GetValue(ref key, out PROPVARIANT value) != 0) return null;
+            try
+            {
+                return value.vt == 31 && value.pwszVal != IntPtr.Zero ? Marshal.PtrToStringUni(value.pwszVal) : null;
+            }
+            finally
+            {
+                PropVariantClear(ref value);
+            }
         }
 
         /// <summary>
@@ -201,7 +275,7 @@ namespace TaskbarGrouper.Services
                 {
                     foreach (var file in Directory.GetFiles(pinnedDir, "*.lnk"))
                     {
-                        if (!LinkFileMatchesGroup(file, groupId)) continue;
+                        if (!LinkFileMatchesGroup(file, groupId, appDataDir)) continue;
                         if (!TryUnpinFromTaskbar(pinnedDir, file))
                         {
                             allUnpinned = false;
@@ -214,7 +288,7 @@ namespace TaskbarGrouper.Services
                 {
                     foreach (var file in Directory.GetFiles(shortcutsDir, "*.lnk"))
                     {
-                        if (LinkFileMatchesGroup(file, groupId))
+                        if (LinkFileMatchesGroup(file, groupId, appDataDir))
                         {
                             try { File.Delete(file); } catch { }
                         }
@@ -239,7 +313,7 @@ namespace TaskbarGrouper.Services
             return allUnpinned;
         }
 
-        private static bool LinkFileMatchesGroup(string file, string groupId)
+        private static bool LinkFileMatchesGroup(string file, string groupId, string appDataDir)
         {
             try
             {
@@ -247,7 +321,8 @@ namespace TaskbarGrouper.Services
                 try
                 {
                     ((IPersistFile)link).Load(file, 0);
-                    return IsShortcutForGroup(ReadLinkArguments(link), groupId);
+                    return ClassifyLoadedPin(link, appDataDir, out var id) != PinOwnership.NotOurs &&
+                           id.Equals(groupId, StringComparison.OrdinalIgnoreCase);
                 }
                 finally
                 {
@@ -286,6 +361,11 @@ namespace TaskbarGrouper.Services
             }
         }
 
+        private static bool SameIconLocation(string stored, string expected)
+        {
+            return string.Equals(Environment.ExpandEnvironmentVariables(stored ?? string.Empty), expected, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static void UpdatePinnedTaskbarShortcutForGroup(AppGroup group, string appDataDir)
         {
             try
@@ -304,7 +384,11 @@ namespace TaskbarGrouper.Services
                         try
                         {
                             ((IPersistFile)link).Load(file, 0);
-                            if (!IsShortcutForGroup(ReadLinkArguments(link), group.Id)) continue;
+                            if (ClassifyLoadedPin(link, appDataDir, out var id) == PinOwnership.NotOurs ||
+                                !id.Equals(group.Id, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
 
                             // The .ico name is versioned by content, so an unchanged look means an unchanged path
                             icoPath ??= IconHelper.GenerateGroupIcoFile(group, Path.Combine(appDataDir, "Icons"));
@@ -313,7 +397,7 @@ namespace TaskbarGrouper.Services
                             var iconSb = new StringBuilder(1024);
                             link.GetIconLocation(iconSb, iconSb.Capacity, out _);
                             if (string.Equals(pathSb.ToString(), AppInfo.ExePath, StringComparison.OrdinalIgnoreCase) &&
-                                string.Equals(iconSb.ToString(), icoPath, StringComparison.OrdinalIgnoreCase))
+                                SameIconLocation(iconSb.ToString(), icoPath))
                             {
                                 continue;
                             }
@@ -372,11 +456,11 @@ namespace TaskbarGrouper.Services
         }
 
         /// <summary>
-        /// Repairs pinned StackBar shortcuts whose exe path moved or whose icon file is gone.
-        /// Shortcuts that are already correct are left untouched, so a normal start doesn't
-        /// rewrite every pinned .lnk and flush the shell icon cache.
+        /// Repairs this StackBar's pinned stacks: re-points orphaned pins (the exe was moved or reinstalled)
+        /// and regenerates missing icons. Pins that point at another existing StackBar copy are left alone,
+        /// so running a second copy (portable, dev build, a downloaded exe) never takes them over.
         /// </summary>
-        public static void HealPinnedTaskbarShortcuts(AppConfig config, string appDataDir)
+        public static void HealPinnedTaskbarShortcuts(IReadOnlyList<AppGroup> groups, string appDataDir)
         {
             try
             {
@@ -392,19 +476,16 @@ namespace TaskbarGrouper.Services
                         try
                         {
                             ((IPersistFile)link).Load(file, 0);
-                            if (!TryGetGroupIdFromArgs(ReadLinkArguments(link), out var groupId)) continue;
+                            var ownership = ClassifyLoadedPin(link, appDataDir, out var groupId);
+                            if (ownership == PinOwnership.NotOurs) continue;
 
-                            var group = config.Groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+                            var group = groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
                             if (group == null) continue;
 
-                            var pathSb = new StringBuilder(1024);
-                            link.GetPath(pathSb, pathSb.Capacity, IntPtr.Zero, 0);
                             var iconSb = new StringBuilder(1024);
                             link.GetIconLocation(iconSb, iconSb.Capacity, out _);
-
-                            bool exeMoved = !string.Equals(pathSb.ToString(), AppInfo.ExePath, StringComparison.OrdinalIgnoreCase);
                             bool iconMissing = !File.Exists(Environment.ExpandEnvironmentVariables(iconSb.ToString()));
-                            if (!exeMoved && !iconMissing) continue;
+                            if (ownership == PinOwnership.Ours && !iconMissing) continue;
 
                             string icoPath = IconHelper.GenerateGroupIcoFile(group, Path.Combine(appDataDir, "Icons"));
                             link.SetPath(AppInfo.ExePath);
@@ -649,11 +730,75 @@ namespace TaskbarGrouper.Services
         public static bool GroupContainsSource(AppGroup group, string sourcePath, string? displayName = null)
         {
             string name = CleanItemName(displayName ?? Path.GetFileNameWithoutExtension(sourcePath));
-            return group.Items.Any(existing =>
-                string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(existing.TargetPath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
-                // Items imported before SourcePath existed: fall back to the display name
-                (existing.SourcePath == null && existing.Name.Equals(name, StringComparison.OrdinalIgnoreCase)));
+            if (group.Items.Any(existing =>
+                    string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(existing.TargetPath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
+                    // Items imported before SourcePath existed: fall back to the display name
+                    (existing.SourcePath == null && existing.Name.Equals(name, StringComparison.OrdinalIgnoreCase))))
+            {
+                return true;
+            }
+
+            // The same app is offered by several sources (pinned .lnk, Start Menu .lnk, AppsFolder entry),
+            // each with its own path: compare what they launch instead
+            var newKeys = LaunchIdentities(sourcePath);
+            return newKeys.Count > 0 && group.Items.Any(existing => LaunchIdentities(existing.TargetPath).Overlaps(newKeys));
+        }
+
+        /// <summary>
+        /// Keys describing what a path launches: "exe:&lt;target&gt;|&lt;arguments&gt;" for programs and shortcuts,
+        /// "app:&lt;AppUserModelID&gt;" for shortcuts with an app ID and AppsFolder entries, "url:&lt;URL&gt;" for .url files.
+        /// </summary>
+        internal static HashSet<string> LaunchIdentities(string path)
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(path)) return keys;
+
+            const string appsFolder = "shell:AppsFolder\\";
+            if (path.StartsWith(appsFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                // A desktop app's AppsFolder id is either its app ID or its exe path
+                string id = path.Substring(appsFolder.Length);
+                keys.Add("app:" + id);
+                keys.Add("exe:" + id + "|");
+                return keys;
+            }
+
+            try
+            {
+                if (path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+                {
+                    var link = (IShellLinkW)new ShellLink();
+                    try
+                    {
+                        ((IPersistFile)link).Load(path, 0);
+                        var target = new StringBuilder(1024);
+                        link.GetPath(target, target.Capacity, IntPtr.Zero, 0);
+                        if (target.Length > 0) keys.Add("exe:" + target + "|" + ReadLinkArguments(link).Trim());
+                        string? aumid = ReadAppUserModelId(link);
+                        if (!string.IsNullOrEmpty(aumid)) keys.Add("app:" + aumid);
+                    }
+                    finally
+                    {
+                        Marshal.FinalReleaseComObject(link);
+                    }
+                }
+                else if (path.EndsWith(".url", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+                {
+                    string? url = File.ReadAllLines(path)
+                        .FirstOrDefault(l => l.StartsWith("URL=", StringComparison.OrdinalIgnoreCase))?.Substring(4).Trim();
+                    if (!string.IsNullOrEmpty(url)) keys.Add("url:" + url);
+                }
+                else if (File.Exists(path))
+                {
+                    keys.Add("exe:" + Path.GetFullPath(path) + "|");
+                }
+            }
+            catch
+            {
+                // Unreadable source: fall back to the path-based checks only
+            }
+            return keys;
         }
 
         /// <summary>
@@ -709,9 +854,14 @@ namespace TaskbarGrouper.Services
         /// Moves copies made by older versions (<c>Links\&lt;hex&gt;_&lt;Name&gt;.lnk</c>) to
         /// <c>Links\&lt;hex&gt;\&lt;Name&gt;.lnk</c> and re-points the items, so pins created from now on get clean names.
         /// </summary>
+        /// <param name="obsoleteFiles">
+        /// The old copies. The caller deletes them only after the updated config was saved successfully,
+        /// otherwise a failed save would leave items pointing at deleted files.
+        /// </param>
         /// <returns>true if any item was changed.</returns>
-        public static bool MigrateFlatLinkCopies(AppConfig config, string appDataDir)
+        public static bool MigrateFlatLinkCopies(AppConfig config, string appDataDir, out List<string> obsoleteFiles)
         {
+            obsoleteFiles = new List<string>();
             string linksDir = Path.Combine(appDataDir, "Links");
             if (!Directory.Exists(linksDir)) return false;
 
@@ -723,11 +873,19 @@ namespace TaskbarGrouper.Services
                 if (!string.Equals(Path.GetDirectoryName(path), linksDir, StringComparison.OrdinalIgnoreCase)) return path;
 
                 string fileName = Path.GetFileName(path);
-                if (fileName.Length <= 9 || fileName[8] != '_' || !IsHexPrefix(fileName.Substring(0, 8)) || !File.Exists(path)) return path;
+                if (fileName.Length <= 9 || fileName[8] != '_' || !IsHexPrefix(fileName.Substring(0, 8))) return path;
 
                 string target = Path.Combine(linksDir, fileName.Substring(0, 8), fileName.Substring(9));
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                if (!File.Exists(target)) File.Copy(path, target);
+                if (File.Exists(path))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    if (!File.Exists(target)) File.Copy(path, target);
+                }
+                else if (!File.Exists(target))
+                {
+                    return path; // neither copy exists: nothing to re-point to
+                }
+                // Old file already gone but the new copy exists (an earlier run's save failed): re-point anyway
                 moved[path!] = target;
                 return target;
             }
@@ -752,12 +910,36 @@ namespace TaskbarGrouper.Services
                 }
             }
 
-            // Old files are deleted only after every item points at the new copy
-            foreach (var oldPath in moved.Keys)
-            {
-                try { File.Delete(oldPath); } catch { }
-            }
+            obsoleteFiles.AddRange(moved.Keys.Where(File.Exists));
             return modified;
+        }
+
+        /// <summary>
+        /// Recursive file listing that skips folders it can't read, instead of losing the whole tree
+        /// (Directory.GetFiles(AllDirectories) throws on the first inaccessible or too-long subfolder).
+        /// </summary>
+        internal static IEnumerable<string> EnumerateFilesSafely(string root, string pattern)
+        {
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.Count > 0)
+            {
+                string dir = pending.Pop();
+                string[] files, subdirs;
+                try { files = Directory.GetFiles(dir, pattern); } catch { files = new string[0]; }
+                try { subdirs = Directory.GetDirectories(dir); } catch { subdirs = new string[0]; }
+                foreach (var file in files) yield return file;
+                foreach (var sub in subdirs) pending.Push(sub);
+            }
+        }
+
+        /// <summary>Deletes files that a successfully saved config no longer references.</summary>
+        public static void DeleteFiles(IEnumerable<string> paths)
+        {
+            foreach (var path in paths)
+            {
+                try { File.Delete(path); } catch (Exception ex) { AppLogger.Log("Could not delete " + path + ": " + ex.Message); }
+            }
         }
 
         public static GroupItem ParseShortcut(string lnkOrFilePath)
@@ -977,7 +1159,7 @@ namespace TaskbarGrouper.Services
                 if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
                 try
                 {
-                    foreach (var file in Directory.GetFiles(dir, "*.lnk", SearchOption.AllDirectories))
+                    foreach (var file in EnumerateFilesSafely(dir, "*.lnk"))
                     {
                         AddIfUnique(ParseShortcut(file), "⊞ Start Menu");
                     }
@@ -1042,7 +1224,6 @@ namespace TaskbarGrouper.Services
                 {
                     string dest = NewCustomIconPath(iconsDir, groupId, ext);
                     File.Copy(sourcePath, dest, true);
-                    DeleteOldCustomIcons(iconsDir, groupId, dest);
                     return dest;
                 }
             }
@@ -1060,7 +1241,6 @@ namespace TaskbarGrouper.Services
             {
                 string dest = NewCustomIconPath(iconsDir, groupId, ".png");
                 bmp.Save(dest, System.Drawing.Imaging.ImageFormat.Png);
-                DeleteOldCustomIcons(iconsDir, groupId, dest);
                 return dest;
             }
         }
@@ -1076,6 +1256,16 @@ namespace TaskbarGrouper.Services
         {
             return Directory.GetFiles(iconsDir, $"custom_{groupId}.*")
                 .Concat(Directory.GetFiles(iconsDir, $"custom_{groupId}_*"));
+        }
+
+        /// <summary>
+        /// Removes a stack's previous cover images. Call only after the config that points at
+        /// <paramref name="keep"/> (or at no cover) was saved, so a failed save never leaves a dangling path.
+        /// </summary>
+        public static void DeleteUnusedCustomIcons(string groupId, string? keep, string appDataDir)
+        {
+            string iconsDir = Path.Combine(appDataDir, "Icons");
+            if (Directory.Exists(iconsDir)) DeleteOldCustomIcons(iconsDir, groupId, keep ?? string.Empty);
         }
 
         private static void DeleteOldCustomIcons(string iconsDir, string groupId, string keep)

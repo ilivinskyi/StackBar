@@ -126,18 +126,40 @@ namespace StackBar.Tests
                 var exeItem = new GroupItem { Name = "Tool", TargetPath = @"C:\Tools\tool.exe" };
                 var config = new AppConfig { Groups = new List<AppGroup> { new AppGroup { Items = new List<GroupItem> { item, exeItem } } } };
 
-                Assert.True(ShortcutService.MigrateFlatLinkCopies(config, dir.Path));
+                Assert.True(ShortcutService.MigrateFlatLinkCopies(config, dir.Path, out var obsolete));
 
                 string expected = Path.Combine(links, "a8b0d2a3", "Firefox.lnk");
                 Assert.Equal(expected, item.TargetPath);
                 Assert.Equal(expected, item.CustomIconPath);
                 Assert.Equal("lnk", File.ReadAllText(expected));
-                Assert.False(File.Exists(oldCopy));
+                // The old copy is only reported: the caller deletes it after the config was saved
+                Assert.True(File.Exists(oldCopy));
+                Assert.Equal(new[] { oldCopy }, obsolete);
                 Assert.True(File.Exists(unrelated));
                 Assert.Equal(@"C:\Tools\tool.exe", exeItem.TargetPath);
 
                 // Second run: nothing left to migrate
-                Assert.False(ShortcutService.MigrateFlatLinkCopies(config, dir.Path));
+                Assert.False(ShortcutService.MigrateFlatLinkCopies(config, dir.Path, out _));
+            }
+        }
+
+        [Fact]
+        public void MigrateFlatLinkCopies_repoints_items_when_an_earlier_run_could_not_save()
+        {
+            using (var dir = new TempDirectory())
+            {
+                // State after a run whose save failed: the new copy exists, the old file is gone, the config is old
+                string links = Path.Combine(dir.Path, "Links");
+                string newCopy = Path.Combine(links, "a8b0d2a3", "Firefox.lnk");
+                Directory.CreateDirectory(Path.GetDirectoryName(newCopy)!);
+                File.WriteAllText(newCopy, "lnk");
+                var item = new GroupItem { Name = "Firefox", TargetPath = Path.Combine(links, "a8b0d2a3_Firefox.lnk") };
+                var config = new AppConfig { Groups = new List<AppGroup> { new AppGroup { Items = new List<GroupItem> { item } } } };
+
+                Assert.True(ShortcutService.MigrateFlatLinkCopies(config, dir.Path, out var obsolete));
+
+                Assert.Equal(newCopy, item.TargetPath);
+                Assert.Empty(obsolete);
             }
         }
 
@@ -158,7 +180,7 @@ namespace StackBar.Tests
         }
 
         [Fact]
-        public void PersistCustomFolderIcon_uses_a_new_file_per_cover_and_removes_the_previous_one()
+        public void PersistCustomFolderIcon_uses_a_new_file_per_cover_and_keeps_the_old_one_until_cleanup()
         {
             using (var dir = new TempDirectory())
             {
@@ -171,6 +193,11 @@ namespace StackBar.Tests
                 Assert.NotNull(first);
                 Assert.NotNull(second);
                 Assert.NotEqual(first, second);
+                // The config still points at the first cover until it is saved
+                Assert.True(File.Exists(first));
+
+                ShortcutService.DeleteUnusedCustomIcons("g1", second, dir.Path);
+
                 Assert.False(File.Exists(first));
                 Assert.True(File.Exists(second));
             }

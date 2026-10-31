@@ -21,7 +21,7 @@ namespace TaskbarGrouper.Services
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
-        private readonly Action<string, int, int> _onOpenGroupRequested;
+        private readonly Action<string, int, int, DateTime?> _onOpenGroupRequested;
         private readonly Action _onManagerRequested;
         private readonly Action _onExitRequested;
         private readonly Thread _listenerThread;
@@ -48,7 +48,7 @@ namespace TaskbarGrouper.Services
             }
         }
 
-        public IpcService(Action<string, int, int> onOpenGroupRequested, Action onManagerRequested, Action onExitRequested)
+        public IpcService(Action<string, int, int, DateTime?> onOpenGroupRequested, Action onManagerRequested, Action onExitRequested)
         {
             _onOpenGroupRequested = onOpenGroupRequested;
             _onManagerRequested = onManagerRequested;
@@ -147,7 +147,11 @@ namespace TaskbarGrouper.Services
                 string groupId = parts[1];
                 int.TryParse(parts[2], out int x);
                 int.TryParse(parts[3], out int y);
-                _onOpenGroupRequested(groupId, x, y);
+                // Optional 5th field: the client's process start time (UTC ticks), used for click-to-close
+                DateTime? clientStart = parts.Length >= 5 && long.TryParse(parts[4], out long ticks) && ticks > 0
+                    ? new DateTime(ticks, DateTimeKind.Utc)
+                    : (DateTime?)null;
+                _onOpenGroupRequested(groupId, x, y, clientStart);
             }
             else if (cmd.Equals("MANAGER", StringComparison.OrdinalIgnoreCase))
             {

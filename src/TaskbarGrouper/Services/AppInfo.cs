@@ -30,18 +30,22 @@ namespace TaskbarGrouper.Services
             {
                 if (!_isPortable.HasValue)
                 {
-                    // Portable if:
-                    // 1. A .portable or portable.txt flag file exists next to the executable
-                    // 2. OR the executable name ends with -Portable (e.g. StackBar-Portable.exe)
-                    // 3. OR a "data" directory exists in the base directory
-                    string exeName = Path.GetFileNameWithoutExtension(ExePath);
-                    _isPortable = File.Exists(Path.Combine(BaseDirectory, ".portable"))
-                                  || File.Exists(Path.Combine(BaseDirectory, "portable.txt"))
-                                  || Directory.Exists(Path.Combine(BaseDirectory, "data"))
-                                  || exeName.IndexOf("Portable", StringComparison.OrdinalIgnoreCase) >= 0;
+                    _isPortable = DetectPortable(BaseDirectory, ExePath);
                 }
                 return _isPortable.Value;
             }
+        }
+
+        /// <summary>
+        /// Portable only on an explicit signal: the ".portable" / "portable.txt" marker (build.ps1 ships it)
+        /// or the exact portable exe name. A folder that merely contains a "data" subfolder (a custom install
+        /// folder, a cluttered Downloads folder) must not silently switch an installed copy to portable.
+        /// </summary>
+        internal static bool DetectPortable(string baseDirectory, string exePath)
+        {
+            return File.Exists(Path.Combine(baseDirectory, ".portable"))
+                   || File.Exists(Path.Combine(baseDirectory, "portable.txt"))
+                   || string.Equals(Path.GetFileNameWithoutExtension(exePath), "StackBar-Portable", StringComparison.OrdinalIgnoreCase);
         }
     }
 

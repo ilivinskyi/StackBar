@@ -64,8 +64,8 @@ namespace TaskbarGrouper.Views
             if (!IsLoaded) return; // closed while scanning
 
             _allItems = vms;
-            _filteredItems = _allItems;
-            ShortcutsList.ItemsSource = _filteredItems;
+            // Respect anything typed into the search box while the scan was running
+            ApplyFilter();
             LoadingOverlay.Visibility = Visibility.Collapsed;
         }
 
@@ -113,7 +113,9 @@ namespace TaskbarGrouper.Views
             return false;
         }
 
-        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyFilter();
+
+        private void ApplyFilter()
         {
             string q = SearchBox.Text.Trim();
             if (string.IsNullOrEmpty(q))

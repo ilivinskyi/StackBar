@@ -29,11 +29,10 @@ namespace TaskbarGrouper.Views
             get => Model.Name;
             set
             {
-                if (Model.Name != value)
-                {
-                    Model.Name = value;
-                    _onEdited();
-                }
+                // While retyping, the box can be empty for a moment: keep the previous name instead of storing ""
+                if (string.IsNullOrWhiteSpace(value) || Model.Name == value) return;
+                Model.Name = value;
+                _onEdited();
             }
         }
 
@@ -77,13 +76,23 @@ namespace TaskbarGrouper.Views
             InitializeAccentPalette();
 
             _suppressEvents = true;
-            RunAtStartupCheck.IsChecked = StartupService.IsRunAtStartupEnabled();
             RepairShortcutsCheck.IsChecked = _config.RepairAppShortcuts;
             if (AppInfo.IsPortableMode)
             {
                 ModeBadgeText.Text = "Portable Edition v1.1";
+                // Don't show the installed copy's setting: Portable Edition never registers itself
+                RunAtStartupCheck.IsChecked = false;
                 RunAtStartupCheck.IsEnabled = false;
                 RunAtStartupCheck.ToolTip = "Windows startup registration is disabled in Portable Mode.";
+            }
+            else
+            {
+                var startup = StartupService.GetState();
+                RunAtStartupCheck.IsChecked = startup == StartupService.StartupState.On;
+                if (startup == StartupService.StartupState.Stale)
+                {
+                    StatusText.Text = "The Windows startup entry points to an old StackBar location. Tick 'Run in Tray at Windows Startup' to fix it.";
+                }
             }
             _suppressEvents = false;
 
@@ -106,18 +115,33 @@ namespace TaskbarGrouper.Views
             ItemsListBox.PreviewMouseMove += ItemsListBox_PreviewMouseMove;
         }
 
+        /// <summary>
+        /// Saves debounced edits (stack and app names, labels). None of them changes the stack's icon,
+        /// so the pinned shortcut is not touched here; icon edits go through <see cref="SyncGroupAndTaskbarIcon"/>.
+        /// </summary>
         private void FlushPendingSave()
         {
             _debounceTimer.Stop();
             if (_dirtyGroups.Count == 0) return;
 
-            _configService.Save(_config);
             foreach (var group in _dirtyGroups)
             {
-                ShortcutService.UpdatePinnedTaskbarShortcutForGroup(group, _configService.AppDataDirectory);
+                group.Name = group.Name.Trim();
+                foreach (var item in group.Items) item.Name = item.Name.Trim();
             }
             _dirtyGroups.Clear();
+            SaveOrReport();
             RefreshLiveFolderIcon();
+        }
+
+        /// <returns>false (and tells the user) if the config could not be written.</returns>
+        private bool SaveOrReport()
+        {
+            if (_configService.Save(_config)) return true;
+            StatusText.Text = "Could not save your changes: " + _configService.LastError;
+            MessageBox.Show(this, "StackBar could not save your changes:\n" + _configService.LastError,
+                "StackBar", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
         }
 
         /// <summary>A flyout (or startup maintenance) changed the shared config: show it instead of keeping a stale view.</summary>
@@ -413,14 +437,41 @@ namespace TaskbarGrouper.Views
             SyncGroupAndTaskbarIcon(_selectedGroup);
         }
 
-        private void SyncGroupAndTaskbarIcon(AppGroup? group)
+        /// <returns>false if the config could not be saved: callers must not delete files it stopped referencing.</returns>
+        private bool SyncGroupAndTaskbarIcon(AppGroup? group)
         {
-            if (group == null) return;
+            if (group == null) return false;
             _dirtyGroups.Remove(group);
-            _configService.Save(_config);
+            bool saved = SaveOrReport();
             ShortcutService.UpdatePinnedTaskbarShortcutForGroup(group, _configService.AppDataDirectory);
             group.NotifyAppearanceChanged();
             RefreshLiveFolderIcon();
+            return saved;
+        }
+
+        /// <summary>Selects the icon-style radio without firing StyleRadio_Checked (which would sync a second time).</summary>
+        private void SetStyleRadio(FolderIconMode mode)
+        {
+            bool previous = _suppressEvents;
+            _suppressEvents = true;
+            if (mode == FolderIconMode.CustomIco) StyleCustomRadio.IsChecked = true;
+            else if (mode == FolderIconMode.EmojiGlyph) StyleEmojiRadio.IsChecked = true;
+            else StyleGridRadio.IsChecked = true;
+            _suppressEvents = previous;
+        }
+
+        /// <summary>Applies a new cover image; the previous one is deleted only after the config was saved.</summary>
+        private void ApplyCustomCover(string persisted)
+        {
+            if (_selectedGroup == null) return;
+            _selectedGroup.CustomFolderIconPath = persisted;
+            _selectedGroup.IconMode = FolderIconMode.CustomIco;
+            SetStyleRadio(FolderIconMode.CustomIco);
+            UpdateIconControlVisibility();
+            if (SyncGroupAndTaskbarIcon(_selectedGroup))
+            {
+                ShortcutService.DeleteUnusedCustomIcons(_selectedGroup.Id, persisted, _configService.AppDataDirectory);
+            }
         }
 
         private void RefreshItemsList()
@@ -484,6 +535,12 @@ namespace TaskbarGrouper.Views
         private void GroupMeta_Changed(object sender, TextChangedEventArgs e)
         {
             if (_suppressEvents || _selectedGroup == null) return;
+            if (string.IsNullOrWhiteSpace(GroupNameBox.Text))
+            {
+                // Keep the previous name until a real one is typed (an empty name breaks the flyout title and shortcut)
+                StatusText.Text = "A stack needs a name.";
+                return;
+            }
             _selectedGroup.Name = GroupNameBox.Text;
             _selectedGroup.NotifyAppearanceChanged();
             TriggerDebounceSave();
@@ -528,11 +585,7 @@ namespace TaskbarGrouper.Views
                 string? persisted = ShortcutService.PersistCustomFolderIcon(ofd.FileName, _selectedGroup.Id, _configService.AppDataDirectory);
                 if (!string.IsNullOrEmpty(persisted))
                 {
-                    _selectedGroup.CustomFolderIconPath = persisted;
-                    _selectedGroup.IconMode = FolderIconMode.CustomIco;
-                    StyleCustomRadio.IsChecked = true;
-                    UpdateIconControlVisibility();
-                    SyncGroupAndTaskbarIcon(_selectedGroup);
+                    ApplyCustomCover(persisted!);
                     StatusText.Text = $"Applied custom icon from '{Path.GetFileName(ofd.FileName)}'.";
                 }
             }
@@ -550,11 +603,7 @@ namespace TaskbarGrouper.Views
             string? persisted = ShortcutService.PersistCustomFolderIcon(first, _selectedGroup.Id, _configService.AppDataDirectory);
             if (!string.IsNullOrEmpty(persisted))
             {
-                _selectedGroup.CustomFolderIconPath = persisted;
-                _selectedGroup.IconMode = FolderIconMode.CustomIco;
-                StyleCustomRadio.IsChecked = true;
-                UpdateIconControlVisibility();
-                SyncGroupAndTaskbarIcon(_selectedGroup);
+                ApplyCustomCover(persisted!);
                 StatusText.Text = $"Using '{first.Name}' as folder cover icon.";
             }
         }
@@ -564,9 +613,12 @@ namespace TaskbarGrouper.Views
             if (_selectedGroup == null) return;
             _selectedGroup.CustomFolderIconPath = null;
             _selectedGroup.IconMode = FolderIconMode.MiniGrid2x2;
-            StyleGridRadio.IsChecked = true;
+            SetStyleRadio(FolderIconMode.MiniGrid2x2);
             UpdateIconControlVisibility();
-            SyncGroupAndTaskbarIcon(_selectedGroup);
+            if (SyncGroupAndTaskbarIcon(_selectedGroup))
+            {
+                ShortcutService.DeleteUnusedCustomIcons(_selectedGroup.Id, null, _configService.AppDataDirectory);
+            }
             StatusText.Text = "Reverted to 2x2 grid icon.";
         }
 
@@ -576,7 +628,7 @@ namespace TaskbarGrouper.Views
             SelectedEmojiDisplay.Text = glyph;
             _selectedGroup.IconGlyph = glyph;
             _selectedGroup.IconMode = FolderIconMode.EmojiGlyph;
-            StyleEmojiRadio.IsChecked = true;
+            SetStyleRadio(FolderIconMode.EmojiGlyph);
             UpdateIconControlVisibility();
             SyncGroupAndTaskbarIcon(_selectedGroup);
         }
@@ -587,11 +639,7 @@ namespace TaskbarGrouper.Views
             string? persisted = ShortcutService.PersistCustomFolderIcon(row.Model, _selectedGroup.Id, _configService.AppDataDirectory);
             if (!string.IsNullOrEmpty(persisted))
             {
-                _selectedGroup.CustomFolderIconPath = persisted;
-                _selectedGroup.IconMode = FolderIconMode.CustomIco;
-                StyleCustomRadio.IsChecked = true;
-                UpdateIconControlVisibility();
-                SyncGroupAndTaskbarIcon(_selectedGroup);
+                ApplyCustomCover(persisted!);
                 StatusText.Text = $"Set '{row.Model.Name}' icon as the cover for '{_selectedGroup.Name}'.";
             }
         }
@@ -607,7 +655,14 @@ namespace TaskbarGrouper.Views
         {
             if (_suppressEvents) return;
             bool enabled = RunAtStartupCheck.IsChecked == true;
-            StartupService.SetRunAtStartup(enabled);
+            if (!StartupService.SetRunAtStartup(enabled))
+            {
+                StatusText.Text = "Could not change the Windows startup setting (see the log for details).";
+                _suppressEvents = true;
+                RunAtStartupCheck.IsChecked = StartupService.GetState() == StartupService.StartupState.On;
+                _suppressEvents = false;
+                return;
+            }
             StatusText.Text = enabled
                 ? "StackBar will start automatically in your system tray on login."
                 : "Removed StackBar from Windows startup.";
@@ -617,7 +672,8 @@ namespace TaskbarGrouper.Views
         {
             if (_suppressEvents) return;
             _config.RepairAppShortcuts = RepairShortcutsCheck.IsChecked == true;
-            _configService.Save(_config);
+            SaveOrReport();
+            if (_config.RepairAppShortcuts) ShortcutRepairService.RefreshIndexInBackground();
             StatusText.Text = _config.RepairAppShortcuts
                 ? "Outdated app shortcuts will be refreshed before launching (prevents blank taskbar icons)."
                 : "StackBar will no longer touch other apps' shortcuts (its own copies are still kept current).";
@@ -630,7 +686,9 @@ namespace TaskbarGrouper.Views
             try
             {
                 string appDataDir = _configService.AppDataDirectory;
-                var report = await System.Threading.Tasks.Task.Run(() => ShortcutRepairService.RepairAll(_config, appDataDir));
+                // Copied on the UI thread: Studio stays editable while the repair runs
+                var itemPaths = _config.Groups.SelectMany(g => g.Items).Select(i => i.TargetPath).ToList();
+                var report = await System.Threading.Tasks.Task.Run(() => ShortcutRepairService.RepairAll(itemPaths, appDataDir));
 
                 var message = new System.Text.StringBuilder();
                 message.AppendLine($"Checked {report.Checked} shortcut(s).");
@@ -638,11 +696,15 @@ namespace TaskbarGrouper.Views
                     ? "No outdated shortcuts found."
                     : $"Refreshed {report.Repaired.Count} outdated shortcut(s):");
                 foreach (var path in report.Repaired) message.AppendLine("  • " + Path.GetFileNameWithoutExtension(path));
+                if (report.Skipped.Count > 0)
+                {
+                    message.AppendLine();
+                    message.AppendLine($"Skipped {report.Skipped.Count} outdated shortcut(s) StackBar can't change (installed for all users; they need administrator rights).");
+                }
                 if (report.Failed.Count > 0)
                 {
                     message.AppendLine();
-                    message.AppendLine($"Could not refresh {report.Failed.Count} shortcut(s) (shortcuts for all users need administrator rights):");
-                    foreach (var path in report.Failed) message.AppendLine("  • " + path);
+                    message.AppendLine($"Could not refresh {report.Failed.Count} shortcut(s); details are in the log.");
                 }
                 if (report.Repaired.Count > 0)
                 {
@@ -651,7 +713,7 @@ namespace TaskbarGrouper.Views
                     message.AppendLine("An app that is already open may need to be closed and reopened to show the fixed icon.");
                 }
 
-                StatusText.Text = $"Shortcut repair: {report.Repaired.Count} refreshed, {report.Failed.Count} skipped.";
+                StatusText.Text = $"Shortcut repair: {report.Repaired.Count} refreshed, {report.Skipped.Count} skipped, {report.Failed.Count} failed.";
                 MessageBox.Show(this, message.ToString(), "Repair App Shortcuts", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
@@ -703,12 +765,14 @@ namespace TaskbarGrouper.Views
 
             _dirtyGroups.Remove(deleted);
             _config.Groups.Remove(deleted);
-            foreach (var item in deleted.Items)
-            {
-                ShortcutService.DeletePersistedLinkIfUnused(item, _config, _configService.AppDataDirectory);
-            }
             _selectedGroup = _config.Groups.FirstOrDefault();
-            _configService.Save(_config);
+            if (SaveOrReport())
+            {
+                foreach (var item in deleted.Items)
+                {
+                    ShortcutService.DeletePersistedLinkIfUnused(item, _config, _configService.AppDataDirectory);
+                }
+            }
             RefreshGroupsList();
             if (_selectedGroup != null)
                 GroupsListBox.SelectedItem = _selectedGroup;
@@ -734,7 +798,9 @@ namespace TaskbarGrouper.Views
 
             try
             {
-                string lnkPath = ShortcutService.CreateGroupShortcut(_selectedGroup, _configService.AppDataDirectory);
+                string name = _selectedGroup.Name.Trim();
+                bool nameIsShared = _config.Groups.Count(g => string.Equals(g.Name.Trim(), name, StringComparison.OrdinalIgnoreCase)) > 1;
+                string lnkPath = ShortcutService.CreateGroupShortcut(_selectedGroup, _configService.AppDataDirectory, nameIsShared);
                 System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{lnkPath}\"");
                 StatusText.Text = $"Created '{Path.GetFileName(lnkPath)}'! Right-click it in Explorer -> 'Pin to taskbar'.";
             }
@@ -819,8 +885,11 @@ namespace TaskbarGrouper.Views
         {
             if (_selectedGroup == null || !(sender is FrameworkElement fe) || !(fe.Tag is ManagerItemRowViewModel row)) return;
             _selectedGroup.Items.Remove(row.Model);
-            ShortcutService.DeletePersistedLinkIfUnused(row.Model, _config, _configService.AppDataDirectory);
-            SyncGroupAndTaskbarIcon(_selectedGroup);
+            // The copied shortcut is deleted only once the config without the item is on disk
+            if (SyncGroupAndTaskbarIcon(_selectedGroup))
+            {
+                ShortcutService.DeletePersistedLinkIfUnused(row.Model, _config, _configService.AppDataDirectory);
+            }
             RefreshItemsList();
         }
 
