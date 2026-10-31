@@ -44,10 +44,18 @@ namespace TaskbarGrouper.Models
             set { if (value != null && value.Count > 0) Groups = value; }
         }
 
+        /// <summary>
+        /// Refresh outdated app shortcuts (Start Menu / pinned) before launching, so Windows doesn't draw
+        /// a blank taskbar icon for apps that updated themselves in place.
+        /// </summary>
+        [DataMember(Name = "repairAppShortcuts")]
+        public bool RepairAppShortcuts { get; set; } = true;
+
         [OnDeserializing]
         internal void OnDeserializing(StreamingContext context)
         {
             Groups = new List<AppGroup>();
+            RepairAppShortcuts = true;
         }
     }
 

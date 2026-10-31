@@ -19,12 +19,12 @@ namespace TaskbarGrouper.Services
     {
         [ComImport]
         [Guid("00021401-0000-0000-C000-000000000046")]
-        private class ShellLink { }
+        internal class ShellLink { }
 
         [ComImport]
         [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         [Guid("000214F9-0000-0000-C000-000000000046")]
-        private interface IShellLinkW
+        internal interface IShellLinkW
         {
             [PreserveSig] int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, IntPtr pfd, uint fFlags);
             [PreserveSig] int GetIDList(out IntPtr ppidl);
@@ -49,7 +49,7 @@ namespace TaskbarGrouper.Services
         [ComImport]
         [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
-        private interface IPropertyStore
+        internal interface IPropertyStore
         {
             [PreserveSig] int GetCount(out uint cProps);
             [PreserveSig] int GetAt(uint iProp, out PROPERTYKEY pkey);
@@ -59,14 +59,14 @@ namespace TaskbarGrouper.Services
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
-        private struct PROPERTYKEY
+        internal struct PROPERTYKEY
         {
             public Guid fmtid;
             public uint pid;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct PROPVARIANT
+        internal struct PROPVARIANT
         {
             public ushort vt;
             public ushort wReserved1;
@@ -76,7 +76,7 @@ namespace TaskbarGrouper.Services
             public IntPtr ptr2;
         }
 
-        private static readonly PROPERTYKEY AppUserModelIdKey = new PROPERTYKEY
+        internal static readonly PROPERTYKEY AppUserModelIdKey = new PROPERTYKEY
         {
             fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
             pid = 5
@@ -135,10 +135,8 @@ namespace TaskbarGrouper.Services
         }
 
         [DllImport("shell32.dll")]
-        private static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+        internal static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 
-        private const uint SHCNE_ASSOCCHANGED = 0x08000000;
-        private const uint SHCNF_FLUSH = 0x1000;
 
         private static string PinnedTaskbarDirectory => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -232,7 +230,7 @@ namespace TaskbarGrouper.Services
                     }
                 }
 
-                SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, IntPtr.Zero, IntPtr.Zero);
+                if (Directory.Exists(pinnedDir)) NotifyFolderUpdated(pinnedDir);
             }
             catch (Exception ex)
             {
@@ -297,7 +295,7 @@ namespace TaskbarGrouper.Services
                 if (!Directory.Exists(pinnedDir)) return;
 
                 string? icoPath = null;
-                bool updated = false;
+                bool changed = false;
                 foreach (var file in Directory.GetFiles(pinnedDir, "*.lnk"))
                 {
                     try
@@ -306,15 +304,25 @@ namespace TaskbarGrouper.Services
                         try
                         {
                             ((IPersistFile)link).Load(file, 0);
-                            if (IsShortcutForGroup(ReadLinkArguments(link), group.Id))
+                            if (!IsShortcutForGroup(ReadLinkArguments(link), group.Id)) continue;
+
+                            // The .ico name is versioned by content, so an unchanged look means an unchanged path
+                            icoPath ??= IconHelper.GenerateGroupIcoFile(group, Path.Combine(appDataDir, "Icons"));
+                            var pathSb = new StringBuilder(1024);
+                            link.GetPath(pathSb, pathSb.Capacity, IntPtr.Zero, 0);
+                            var iconSb = new StringBuilder(1024);
+                            link.GetIconLocation(iconSb, iconSb.Capacity, out _);
+                            if (string.Equals(pathSb.ToString(), AppInfo.ExePath, StringComparison.OrdinalIgnoreCase) &&
+                                string.Equals(iconSb.ToString(), icoPath, StringComparison.OrdinalIgnoreCase))
                             {
-                                icoPath ??= IconHelper.GenerateGroupIcoFile(group, Path.Combine(appDataDir, "Icons"));
-                                link.SetPath(AppInfo.ExePath);
-                                link.SetIconLocation(icoPath, 0);
-                                ((IPersistFile)link).Save(file, false);
-                                try { File.SetLastWriteTimeUtc(file, DateTime.UtcNow); } catch { }
-                                updated = true;
+                                continue;
                             }
+
+                            link.SetPath(AppInfo.ExePath);
+                            link.SetIconLocation(icoPath, 0);
+                            ((IPersistFile)link).Save(file, false);
+                            try { File.SetLastWriteTimeUtc(file, DateTime.UtcNow); } catch { }
+                            changed = true;
                         }
                         finally
                         {
@@ -324,12 +332,31 @@ namespace TaskbarGrouper.Services
                     catch { }
                 }
 
-                if (updated)
-                {
-                    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, IntPtr.Zero, IntPtr.Zero);
-                }
+                if (changed) NotifyTaskbarIconsChanged();
             }
             catch { }
+        }
+
+        private const uint SHCNE_UPDATEDIR = 0x00001000;
+        private const uint SHCNE_ASSOCCHANGED = 0x08000000;
+        private const uint SHCNF_IDLIST = 0x0000;
+        private const uint SHCNF_PATHW = 0x0005;
+
+        /// <summary>
+        /// Makes the taskbar reload pinned/app icons. The taskbar ignores per-item notifications
+        /// (SHCNE_UPDATEITEM by path or ID list), so this uses SHCNE_ASSOCCHANGED - asynchronously
+        /// (no SHCNF_FLUSH) and only when an icon really changed, not on every edit.
+        /// </summary>
+        internal static void NotifyTaskbarIconsChanged()
+        {
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        private static void NotifyFolderUpdated(string path)
+        {
+            IntPtr p = Marshal.StringToHGlobalUni(path);
+            try { SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, p, IntPtr.Zero); }
+            finally { Marshal.FreeHGlobal(p); }
         }
 
         public static bool IsHexPrefix(string s)
@@ -395,10 +422,7 @@ namespace TaskbarGrouper.Services
                     catch { }
                 }
 
-                if (changed)
-                {
-                    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, IntPtr.Zero, IntPtr.Zero);
-                }
+                if (changed) NotifyTaskbarIconsChanged();
             }
             catch { }
         }

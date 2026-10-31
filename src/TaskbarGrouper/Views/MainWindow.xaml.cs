@@ -78,6 +78,7 @@ namespace TaskbarGrouper.Views
 
             _suppressEvents = true;
             RunAtStartupCheck.IsChecked = StartupService.IsRunAtStartupEnabled();
+            RepairShortcutsCheck.IsChecked = _config.RepairAppShortcuts;
             if (AppInfo.IsPortableMode)
             {
                 ModeBadgeText.Text = "Portable Edition v1.1";
@@ -610,6 +611,58 @@ namespace TaskbarGrouper.Views
             StatusText.Text = enabled
                 ? "StackBar will start automatically in your system tray on login."
                 : "Removed StackBar from Windows startup.";
+        }
+
+        private void RepairShortcutsCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            _config.RepairAppShortcuts = RepairShortcutsCheck.IsChecked == true;
+            _configService.Save(_config);
+            StatusText.Text = _config.RepairAppShortcuts
+                ? "Outdated app shortcuts will be refreshed before launching (prevents blank taskbar icons)."
+                : "StackBar will no longer touch other apps' shortcuts (its own copies are still kept current).";
+        }
+
+        private async void RepairShortcutsButton_Click(object sender, RoutedEventArgs e)
+        {
+            RepairShortcutsButton.IsEnabled = false;
+            StatusText.Text = "Checking app shortcuts...";
+            try
+            {
+                string appDataDir = _configService.AppDataDirectory;
+                var report = await System.Threading.Tasks.Task.Run(() => ShortcutRepairService.RepairAll(_config, appDataDir));
+
+                var message = new System.Text.StringBuilder();
+                message.AppendLine($"Checked {report.Checked} shortcut(s).");
+                message.AppendLine(report.Repaired.Count == 0
+                    ? "No outdated shortcuts found."
+                    : $"Refreshed {report.Repaired.Count} outdated shortcut(s):");
+                foreach (var path in report.Repaired) message.AppendLine("  • " + Path.GetFileNameWithoutExtension(path));
+                if (report.Failed.Count > 0)
+                {
+                    message.AppendLine();
+                    message.AppendLine($"Could not refresh {report.Failed.Count} shortcut(s) (shortcuts for all users need administrator rights):");
+                    foreach (var path in report.Failed) message.AppendLine("  • " + path);
+                }
+                if (report.Repaired.Count > 0)
+                {
+                    message.AppendLine();
+                    message.AppendLine("Backups: " + ShortcutRepairService.BackupDirectory(appDataDir));
+                    message.AppendLine("An app that is already open may need to be closed and reopened to show the fixed icon.");
+                }
+
+                StatusText.Text = $"Shortcut repair: {report.Repaired.Count} refreshed, {report.Failed.Count} skipped.";
+                MessageBox.Show(this, message.ToString(), "Repair App Shortcuts", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log("Shortcut repair failed: " + ex);
+                StatusText.Text = "Shortcut repair failed: " + ex.Message;
+            }
+            finally
+            {
+                RepairShortcutsButton.IsEnabled = true;
+            }
         }
 
         private void AddGroup_Click(object sender, RoutedEventArgs e)

@@ -141,13 +141,31 @@
                             Margin="0,0,0,12"/>
 
                     <Border Background="#14151D" CornerRadius="8" Padding="10,8" BorderBrush="#1CFFFFFF" BorderThickness="1">
-                        <CheckBox x:Name="RunAtStartupCheck"
-                                  Content="Run in Tray at Windows Startup"
-                                  Foreground="#CCFFFFFF"
-                                  FontSize="11.5"
-                                  VerticalContentAlignment="Center"
-                                  Checked="RunAtStartupCheck_Changed"
-                                  Unchecked="RunAtStartupCheck_Changed"/>
+                        <StackPanel>
+                            <CheckBox x:Name="RunAtStartupCheck"
+                                      Content="Run in Tray at Windows Startup"
+                                      Foreground="#CCFFFFFF"
+                                      FontSize="11.5"
+                                      VerticalContentAlignment="Center"
+                                      Checked="RunAtStartupCheck_Changed"
+                                      Unchecked="RunAtStartupCheck_Changed"/>
+                            <CheckBox x:Name="RepairShortcutsCheck"
+                                      Content="Repair outdated app shortcuts"
+                                      ToolTip="Before launching an app, refresh its Start Menu / pinned shortcut if the app updated itself.&#x0a;Prevents blank white taskbar icons. A backup is kept in StackBar's Backups folder."
+                                      Foreground="#CCFFFFFF"
+                                      FontSize="11.5"
+                                      Margin="0,8,0,0"
+                                      VerticalContentAlignment="Center"
+                                      Checked="RepairShortcutsCheck_Changed"
+                                      Unchecked="RepairShortcutsCheck_Changed"/>
+                            <Button x:Name="RepairShortcutsButton"
+                                    Content="Repair App Shortcuts Now"
+                                    ToolTip="Check all Start Menu and pinned shortcuts and refresh the outdated ones"
+                                    Click="RepairShortcutsButton_Click"
+                                    Style="{StaticResource SurfaceBtn}"
+                                    FontSize="11"
+                                    Margin="0,8,0,0"/>
+                        </StackPanel>
                     </Border>
                 </StackPanel>
 

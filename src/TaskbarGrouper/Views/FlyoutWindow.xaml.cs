@@ -807,6 +807,12 @@ namespace TaskbarGrouper.Views
                 }
                 else
                 {
+                    // Must run before launching: the taskbar reads the app's shortcut when its button appears
+                    if (_config.RepairAppShortcuts)
+                    {
+                        ShortcutRepairService.PrepareLaunch(vm.Item, _configService.AppDataDirectory);
+                    }
+
                     string workDir = vm.Item.WorkingDirectory;
                     if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
                     {

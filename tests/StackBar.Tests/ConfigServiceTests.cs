@@ -65,6 +65,20 @@ namespace StackBar.Tests
         }
 
         [Fact]
+        public void Repair_shortcuts_setting_defaults_on_and_persists_off()
+        {
+            using (var dir = new TempDirectory())
+            {
+                File.WriteAllText(dir.File("groups.json"), "{\"groups\":[]}");
+                Assert.True(new ConfigService(dir.Path).LoadOrCreateDefault().RepairAppShortcuts);
+
+                var service = new ConfigService(dir.Path);
+                service.Save(new AppConfig { RepairAppShortcuts = false });
+                Assert.False(new ConfigService(dir.Path).LoadOrCreateDefault().RepairAppShortcuts);
+            }
+        }
+
+        [Fact]
         public void Values_missing_from_old_files_get_app_defaults()
         {
             using (var dir = new TempDirectory())

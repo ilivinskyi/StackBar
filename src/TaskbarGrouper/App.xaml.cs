@@ -96,6 +96,13 @@ namespace TaskbarGrouper
                 {
                     _configService.RaiseGroupChanged(string.Empty);
                 }
+
+                // StackBar's own copies are always kept current; other apps' shortcuts only if the user allows it
+                ShortcutRepairService.RefreshOwnCopies(_config);
+                if (_config.RepairAppShortcuts)
+                {
+                    ShortcutRepairService.WarmIndexInBackground();
+                }
             }
             catch (Exception ex)
             {

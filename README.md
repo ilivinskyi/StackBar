@@ -15,7 +15,7 @@
 - **Portable Edition Supported**: Runs completely self-contained from a folder or USB drive with isolated `./data/` storage, leaving zero registry or AppData footprint. Can run simultaneously alongside an installed copy without IPC collisions.
 - **Separate Pinned Taskbar Folders**: Generates custom `.lnk` shortcuts per category with distinct `AppUserModelID`s (`StackBar.Group.<id>`), allowing you to pin multiple StackBar folders side-by-side on the taskbar.
 - **60-Color Curated Accent Palette**: Select from an expanded 60-color palette (organized into 6 harmonious color rows: Reds, Oranges, Ambers, Limes, Emeralds, Teals, Cyans, Blues, Purples, and Pinks) with live preview on the flyout mockup.
-- **Automatic Pinned Taskbar Sync**: Modifying a stack's icon, accent color, or app order automatically updates the shortcut in Windows' `User Pinned\TaskBar` and flushes the shell icon cache via `SHChangeNotify`, eliminating the need to unpin and re-pin.
+- **Automatic Pinned Taskbar Sync**: Modifying a stack's icon, accent color, or app order automatically updates the shortcut in Windows' `User Pinned\TaskBar` and asks the taskbar to reload icons only when the stack's icon actually changed (no forced icon-cache flush), eliminating the need to unpin and re-pin.
 - **Stack Deletion Safety & Cleanup**: Deleting a stack prompts for confirmation, removes its generated shortcuts and icons, and asks Windows to unpin it from the taskbar.
   If Windows refuses the unpin, Studio tells you to unpin it by hand, and clicking the leftover pin explains that the stack no longer exists.
 - **iOS "Jiggle Mode" (Hold to Reorder / Delete)**:
@@ -88,8 +88,9 @@ dotnet test tests\StackBar.Tests\StackBar.Tests.csproj
 
 ## 🛠️ Troubleshooting & Bug Reports
 
-- **Blank white icon on the taskbar:** this is usually a stale Windows icon cache (common right after an app updates).
-  Run `ie4uinit.exe -show`; if the icon is still blank, unpin and re-pin the app.
+- **Blank white icon on the taskbar:** apps that update themselves in place leave their Start Menu / pinned shortcuts describing the old file, and Windows can then draw a blank icon for the app.
+  StackBar refreshes those outdated shortcuts right before it launches an app (Studio → *Repair outdated app shortcuts*, on by default; each changed shortcut is backed up to `Backups\Shortcuts` in StackBar's data folder).
+  Use *Repair App Shortcuts Now* in Studio to fix all of them at once. Shortcuts installed for all users need administrator rights and are skipped.
 - **Logs:** `%AppData%\StackBar\logs\stackbar.log` (portable: `data\logs\stackbar.log`).
   Please attach the log when [opening an issue](https://github.com/ilivinskyi/StackBar/issues).
 - **Settings:** `%AppData%\StackBar\groups.json`. A corrupt file is kept as `groups.corrupt-<date>.json` and the last good backup is restored.
