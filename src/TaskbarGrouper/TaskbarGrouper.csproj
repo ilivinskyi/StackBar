@@ -23,6 +23,20 @@
     <Reference Include="System.Runtime.Serialization" />
   </ItemGroup>
 
+  <!-- Portable Edition: build.ps1 builds a second exe with -p:StackBarEdition=Portable, which runs portable
+       under any file name. Separate output folders keep it from overwriting the normal build. -->
+  <PropertyGroup Condition="'$(StackBarEdition)' == 'Portable'">
+    <OutputPath>bin\Portable\$(Configuration)\</OutputPath>
+    <IntermediateOutputPath>obj\Portable\$(Configuration)\</IntermediateOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(StackBarEdition)' != ''">
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>StackBarEdition</_Parameter1>
+      <_Parameter2>$(StackBarEdition)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="StackBar.Tests" />
   </ItemGroup>

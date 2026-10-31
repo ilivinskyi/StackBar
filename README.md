@@ -15,7 +15,8 @@
 - **Portable Edition Supported**: Runs from a folder or USB drive and keeps its settings, shortcut copies, icons and logs in `./data/`, with no registry entries of its own.
   Stored paths are relative to `./data/`, and pinned stacks are tied to an ID kept in `./data/`, so moving the folder or getting a new drive letter doesn't break them.
   Outside `./data/` it only touches what you ask for: taskbar pins you create, and (with *Repair outdated app shortcuts* on) other apps' Start Menu / pinned shortcuts.
-  Portable mode is switched on by the `.portable` file shipped in the zip (or by naming the exe `StackBar-Portable.exe`). It runs side by side with an installed copy without either touching the other's pins.
+  `StackBar-Portable.exe` is a separate build that always runs portable, whatever you rename it to.
+  It runs side by side with an installed copy without either touching the other's pins.
 - **Separate Pinned Taskbar Folders**: Generates custom `.lnk` shortcuts per category with distinct `AppUserModelID`s (`StackBar.Group.<id>`), allowing you to pin multiple StackBar folders side-by-side on the taskbar.
 - **60-Color Curated Accent Palette**: Select from an expanded 60-color palette (organized into 6 harmonious color rows: Reds, Oranges, Ambers, Limes, Emeralds, Teals, Cyans, Blues, Purples, and Pinks) with live preview on the flyout mockup.
 - **Automatic Pinned Taskbar Sync**: Modifying a stack's icon, accent color, or app order automatically updates the shortcut in Windows' `User Pinned\TaskBar` and asks the taskbar to reload icons only when the stack's icon actually changed (no forced icon-cache flush), eliminating the need to unpin and re-pin.
@@ -74,14 +75,14 @@ Run `StackBar-Setup.exe`:
 - Registers in Windows *Installed Apps* with an automated uninstaller (pinned StackBar folders have to be unpinned by hand after uninstalling)
 
 ### Option 2: Portable Edition (No Install)
-Extract `StackBar-Portable.zip` and run `StackBar-Portable.exe`:
-- Runs entirely out of its local folder with zero installation.
-- Saves all configs, copied shortcuts, and icons in a local `./data/` directory.
+Download `StackBar-Portable.exe` and run it from any folder or USB drive:
+- Nothing to install or extract.
+- Keeps all configs, copied shortcuts, icons and logs in a `data` folder it creates next to itself.
 
 ### Option 3: Build from Source
 Requires the .NET SDK (Windows). The first build needs network access to restore NuGet packages.
 ```powershell
-# Build StackBar.exe, StackBar-Setup.exe, and StackBar-Portable.zip to artifacts/
+# Build StackBar.exe, StackBar-Setup.exe, and StackBar-Portable.exe to artifacts/
 dotnet restore TaskbarGrouper.sln
 .\build.ps1
 
@@ -94,7 +95,7 @@ For pushes to `main` it also uploads the `artifacts/` folder, so each commit has
 
 ### Releasing
 Push a `vX.Y.Z` tag (for example `git tag v1.2.0` then `git push origin v1.2.0`).
-The [Release workflow](.github/workflows/release.yml) runs the tests, builds with that version, creates the GitHub release with generated notes if it does not exist yet, and attaches `StackBar-Setup.exe` and `StackBar-Portable.zip`.
+The [Release workflow](.github/workflows/release.yml) runs the tests, builds with that version, creates the GitHub release with generated notes if it does not exist yet, and attaches `StackBar-Setup.exe` and `StackBar-Portable.exe`.
 Re-running it for the same tag (Actions → Release → *Run workflow*) replaces those two files.
 A tag with a suffix such as `v1.2.0-rc.1` is published as a pre-release.
 Local builds use the default `<Version>` in `src/TaskbarGrouper/TaskbarGrouper.csproj`; pass `.\build.ps1 -Version X.Y.Z` to stamp a different one.
@@ -127,8 +128,7 @@ Local builds use the default `<Version>` in `src/TaskbarGrouper/TaskbarGrouper.c
 ├── artifacts/                      # Created by build.ps1 (not committed)
 │   ├── StackBar.exe                # Standard installed app binary
 │   ├── StackBar-Setup.exe          # Installer, Updater & Uninstaller wizard
-│   ├── StackBar-Portable/          # Portable standalone directory (isolated ./data/)
-│   └── StackBar-Portable.zip       # Zipped Portable distribution
+│   └── StackBar-Portable.exe       # Portable Edition (keeps everything in a data folder next to itself)
 ├── tests/
 │   └── StackBar.Tests/             # xUnit tests (config, pins, shortcut repair, install safety, icons, placement)
 ├── build.ps1                       # Automated build & staging script

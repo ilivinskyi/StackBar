@@ -104,6 +104,23 @@ namespace StackBar.Tests
                 Assert.True(AppInfo.DetectPortable(dir.Path, dir.File("StackBar.exe")));
             }
         }
+
+        [Fact]
+        public void Portable_build_is_portable_under_any_name_without_a_marker_file()
+        {
+            using (var dir = new TempDirectory())
+            {
+                Assert.True(AppInfo.DetectPortable(dir.Path, dir.File("StackBar-Portable (1).exe"), "Portable"));
+                Assert.True(AppInfo.DetectPortable(dir.Path, dir.File("stackbar.exe"), "portable"));
+                Assert.False(AppInfo.DetectPortable(dir.Path, dir.File("StackBar-Portable (1).exe"), null));
+            }
+        }
+
+        [Fact]
+        public void Normal_build_carries_no_edition_so_it_is_not_portable_by_itself()
+        {
+            Assert.Null(AppInfo.BuildEdition);
+        }
     }
 
     public class PinOwnershipTests
