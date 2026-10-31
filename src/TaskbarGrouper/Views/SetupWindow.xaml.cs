@@ -109,7 +109,7 @@ namespace TaskbarGrouper.Views
                     uninst.SetValue("DisplayIcon", targetExe);
                     uninst.SetValue("InstallLocation", _installDir);
                     uninst.SetValue("Publisher", "StackBar");
-                    uninst.SetValue("DisplayVersion", "1.1.0");
+                    uninst.SetValue("DisplayVersion", AppInfo.DisplayVersion);
                     uninst.SetValue("UninstallString", $"\"{targetExe}\" --uninstall");
                     uninst.SetValue("NoModify", 1, RegistryValueKind.DWord);
                     uninst.SetValue("NoRepair", 1, RegistryValueKind.DWord);

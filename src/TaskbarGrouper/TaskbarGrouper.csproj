@@ -8,6 +8,8 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>StackBar</AssemblyName>
+    <!-- Default for local builds; the release workflow overrides it with the tag version (-p:Version=X.Y.Z) -->
+    <Version>1.1.0</Version>
     <RootNamespace>TaskbarGrouper</RootNamespace>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>

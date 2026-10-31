@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-and-test:
+    # Tests use COM shell links and System.Drawing, so they need Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore TaskbarGrouper.sln
+
+      - name: Build
+        run: dotnet build TaskbarGrouper.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test TaskbarGrouper.sln -c Release --no-build
+
+      - name: Package test build
+        if: github.event_name == 'push'
+        shell: powershell
+        run: .\build.ps1
+
+      - name: Upload test build
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v5
+        with:
+          name: StackBar-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error

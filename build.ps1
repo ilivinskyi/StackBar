@@ -1,9 +1,14 @@
+# -Version X.Y.Z stamps the product version (the release workflow passes the tag); omit it to use the csproj default
+param([string]$Version)
+
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Write-Host "1/3 Compiling StackBar (.NET Framework 4.8)..." -ForegroundColor Cyan
 $buildOutDir = Join-Path $root "src\TaskbarGrouper\bin\Release\net48"
-dotnet build "$root\src\TaskbarGrouper\TaskbarGrouper.csproj" -c Release --no-restore
+$versionArgs = @()
+if ($Version) { $versionArgs += "-p:Version=$Version" }
+dotnet build "$root\src\TaskbarGrouper\TaskbarGrouper.csproj" -c Release --no-restore @versionArgs
 # $ErrorActionPreference does not cover native exit codes in Windows PowerShell 5.1:
 # without this check a failed build would package the previous exe and still print "Success!"
 if ($LASTEXITCODE -ne 0) { throw "Build failed (exit code $LASTEXITCODE); nothing was packaged." }

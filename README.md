@@ -89,6 +89,16 @@ dotnet restore TaskbarGrouper.sln
 dotnet test tests\StackBar.Tests\StackBar.Tests.csproj
 ```
 
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) builds and tests every pull request and every push to `main` on a Windows runner.
+For pushes to `main` it also uploads the `artifacts/` folder, so each commit has a downloadable test build on its workflow run page.
+
+### Releasing
+Push a `vX.Y.Z` tag (for example `git tag v1.2.0` then `git push origin v1.2.0`).
+The [Release workflow](.github/workflows/release.yml) runs the tests, builds with that version, creates the GitHub release with generated notes if it does not exist yet, and attaches `StackBar-Setup.exe` and `StackBar-Portable.zip`.
+Re-running it for the same tag (Actions → Release → *Run workflow*) replaces those two files.
+A tag with a suffix such as `v1.2.0-rc.1` is published as a pre-release.
+Local builds use the default `<Version>` in `src/TaskbarGrouper/TaskbarGrouper.csproj`; pass `.\build.ps1 -Version X.Y.Z` to stamp a different one.
+
 ---
 
 ## 🛠️ Troubleshooting & Bug Reports

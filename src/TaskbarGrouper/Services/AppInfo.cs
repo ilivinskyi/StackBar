@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Diagnostics;
+using System.Reflection;
 
 namespace TaskbarGrouper.Services
 {
@@ -23,6 +24,15 @@ namespace TaskbarGrouper.Services
         }
 
         public static string BaseDirectory => AppDomain.CurrentDomain.BaseDirectory;
+
+        /// <summary>
+        /// Product version shown to users ("1.2.0"). Release builds stamp it from the git tag via -p:Version;
+        /// local builds use the default &lt;Version&gt; in TaskbarGrouper.csproj.
+        /// </summary>
+        public static string DisplayVersion => FormatVersion(typeof(AppInfo).Assembly.GetName().Version);
+
+        internal static string FormatVersion(Version? version) =>
+            version == null ? "0.0.0" : $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}";
 
         public static bool IsPortableMode
         {
