@@ -1,6 +1,7 @@
 <Window x:Class="TaskbarGrouper.Views.FlyoutWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="clr-namespace:TaskbarGrouper.Views"
         Title="StackBar Flyout"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -114,7 +115,7 @@
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Border x:Name="AccentDot" Width="8" Height="8" CornerRadius="4" Background="#3A6DF0" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="GroupTitleGlyph" Text="📁" FontSize="13.5" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <v:EmojiView x:Name="GroupTitleGlyph" Text="📁" EmojiSize="16" Margin="0,0,7,0"/>
                         <TextBlock x:Name="GroupTitleText"
                                    Text="Stack"
                                    Foreground="#F5FFFFFF"

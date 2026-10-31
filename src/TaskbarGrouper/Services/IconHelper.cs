@@ -503,6 +503,7 @@ namespace TaskbarGrouper.Services
                 if (!drewContent)
                 {
                     string glyph = string.IsNullOrWhiteSpace(group.IconGlyph) ? "📁" : group.IconGlyph;
+                    if (!DrawColorEmoji(g, glyph, new RectangleF(size / 2f - 70, size / 2f - 70, 140, 140)))
                     using (var font = new Font("Segoe UI Emoji", 110, System.Drawing.FontStyle.Regular, GraphicsUnit.Pixel))
                     using (var brush = new SolidBrush(System.Drawing.Color.White))
                     {
@@ -517,6 +518,49 @@ namespace TaskbarGrouper.Services
             }
 
             return canvas;
+        }
+
+        /// <summary>
+        /// GDI+ only draws the monochrome outline of an emoji, so fill the font's color layers ourselves.
+        /// Returns false when the emoji has no color form, so the caller can fall back to text.
+        /// </summary>
+        internal static bool DrawColorEmoji(Graphics g, string glyph, RectangleF dest)
+        {
+            var layers = ColorEmoji.GetLayers(glyph);
+            if (layers == null) return false;
+
+            var square = ColorEmoji.SquareAround(ColorEmoji.Bounds(layers));
+            float scale = (float)(dest.Width / square.Width);
+            foreach (var layer in layers)
+            {
+                var flat = layer.Geometry.GetFlattenedPathGeometry(0.05, System.Windows.Media.ToleranceType.Absolute);
+                using (var path = new GraphicsPath(FillMode.Winding))
+                {
+                    foreach (var figure in flat.Figures)
+                    {
+                        var points = new List<PointF> { Map(figure.StartPoint) };
+                        foreach (var segment in figure.Segments)
+                        {
+                            if (segment is System.Windows.Media.PolyLineSegment poly)
+                                foreach (var p in poly.Points) points.Add(Map(p));
+                            else if (segment is System.Windows.Media.LineSegment line)
+                                points.Add(Map(line.Point));
+                        }
+                        if (points.Count >= 3) path.AddPolygon(points.ToArray());
+                    }
+
+                    var c = layer.Color ?? System.Windows.Media.Colors.White;
+                    using (var brush = new SolidBrush(System.Drawing.Color.FromArgb(c.A, c.R, c.G, c.B)))
+                    {
+                        g.FillPath(brush, path);
+                    }
+                }
+            }
+            return true;
+
+            PointF Map(System.Windows.Point p) => new PointF(
+                dest.X + (float)(p.X - square.X) * scale,
+                dest.Y + (float)(p.Y - square.Y) * scale);
         }
 
         public static string GenerateGroupIcoFile(AppGroup group, string outputDirectory)

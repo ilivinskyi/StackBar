@@ -105,7 +105,7 @@ namespace TaskbarGrouper.Views
                 // Register in Windows "Installed apps"
                 using (var uninst = Registry.CurrentUser.CreateSubKey(UninstallKeyPath))
                 {
-                    uninst.SetValue("DisplayName", "StackBar — Taskbar Folder Studio");
+                    uninst.SetValue("DisplayName", "StackBar - Taskbar Folder Studio");
                     uninst.SetValue("DisplayIcon", targetExe);
                     uninst.SetValue("InstallLocation", _installDir);
                     uninst.SetValue("Publisher", "StackBar");
@@ -301,7 +301,7 @@ namespace TaskbarGrouper.Views
                 shortcut.TargetPath = targetExePath;
                 shortcut.WorkingDirectory = Path.GetDirectoryName(targetExePath);
                 shortcut.IconLocation = $"{targetExePath},0";
-                shortcut.Description = "StackBar — Taskbar Folder Studio";
+                shortcut.Description = "StackBar - Taskbar Folder Studio";
                 shortcut.Save();
             }
             catch { }
