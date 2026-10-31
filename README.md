@@ -8,6 +8,26 @@
 
 **StackBar** declutters your Windows taskbar by grouping rarely-used or categorized applications (*Gaming*, *AI & Dev*, *Creative*, *Web*) into sleek pop-up folders anchored directly above your taskbar icons.
 
+<p align="center">
+  <img src="assets/screenshots/stackbar-demo.gif" width="760" alt="Opening stacks from the taskbar, rearranging apps, and switching between stacks" />
+</p>
+
+## 📸 Screenshots
+
+| Stack pop-up | Rearrange mode |
+| :---: | :---: |
+| <img src="assets/screenshots/flyout.png" width="420" alt="A stack of developer apps opened above the taskbar" /> | <img src="assets/screenshots/rearrange.png" width="420" alt="Rearrange mode with delete badges on each app" /> |
+
+<p align="center">
+  <img src="assets/screenshots/studio.png" width="820" alt="StackBar Studio, where stacks and their apps are edited" />
+</p>
+
+| Accent colors | Emoji icons |
+| :---: | :---: |
+| <img src="assets/screenshots/accent-colors.png" width="420" alt="The 60-color accent palette" /> | <img src="assets/screenshots/emoji-picker.png" width="420" alt="The emoji picker for stack icons" /> |
+
+Full-size 1920x1080 screenshots are in [`assets/screenshots/store`](assets/screenshots/store).
+
 ## ✨ Highlights
 
 - **Zero Runtime Dependencies**: Re-targeted to **.NET Framework 4.8** (pre-installed on every Windows 10 1903+ and Windows 11 machine). Runs directly out of the box without requiring the .NET Desktop Runtime or any external redistributables.
@@ -40,6 +60,8 @@
 - **Triple Icon Engine**:
   - **Custom Cover Icons**: Pick any `.ico`, `.png`, `.jpg`, `.exe`, or `.dll` file to represent your stack, or click the **★** star button on any app in the list to make its icon the folder's cover.
   - **Visual Emoji Selector & Presets**: Pick from a curated 40+ emoji palette dropdown or trigger the native Windows Emoji Panel (`Win + .`) with one click.
+    Emoji are drawn in full color in the flyout, in Studio and on the taskbar icon, using the color layers of Segoe UI Emoji.
+    Emoji built from several characters (e.g. 👨‍💻 or flags) are shown in monochrome.
   - **iOS 2×2 Mini-Grid**: Automatically composites the first 4 apps inside a folder into a version-hashed 256×256 squircle `.ico` (bypassing Windows taskbar icon cache stalls).
 - **4-Stage Icon Recovery Pipeline**: Combines `IShellItemImageFactory`, target `.exe` binary resolution, and `SHGetFileInfo` so Adobe apps, Steam games, and Store apps keep their icons.
   Transparency is preserved (no black corners), and icons stored at a specific index inside a `.dll`/`.exe` (e.g. `shell32.dll,-16`) are honored.
@@ -121,10 +143,12 @@ Local builds use the default `<Version>` in `src/TaskbarGrouper/TaskbarGrouper.c
 │       ├── Assets/                 # Multi-res app_icon.ico & app_icon.png
 │       ├── Common/                 # Polyfills & string utilities
 │       ├── Models/                 # AppConfig, AppGroup, GroupItem
-│       ├── Services/               # ConfigService, ShortcutService, ShortcutRepairService, IconHelper, IpcService,
+│       ├── Services/               # ConfigService, ShortcutService, ShortcutRepairService, IconHelper, ColorEmoji, IpcService,
 │       │                           # NativePositioningService, StartupService, InstallLocation, LaunchRules, AppInfo/AppLogger
-│       ├── Themes/                 # Dark.xaml (Dark theme scrollbars, checkboxes, controls)
-│       └── Views/                  # MainWindow (Studio), FlyoutWindow, TaskbarImporterWindow, SetupWindow
+│       ├── Themes/                 # Dark.xaml (Dark theme scrollbars, checkboxes, context menus, controls)
+│       └── Views/                  # MainWindow (Studio), FlyoutWindow, TaskbarImporterWindow, SetupWindow, EmojiView
+├── assets/
+│   └── screenshots/                # README images, demo GIF/MP4, and 1920x1080 store screenshots
 ├── artifacts/                      # Created by build.ps1 (not committed)
 │   ├── StackBar.exe                # Standard installed app binary
 │   ├── StackBar-Setup.exe          # Installer, Updater & Uninstaller wizard
