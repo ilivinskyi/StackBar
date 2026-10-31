@@ -128,6 +128,61 @@ namespace StackBar.Tests
             Assert.Equal("Old", new ConfigService(appData).LoadOrCreateDefault().Groups.Single().Name);
         }
 
+        [Fact]
+        public void Review3_01_import_that_cannot_copy_a_file_fails_with_a_reason_instead_of_half_importing()
+        {
+            string legacy = _dir.File(@"install2\data");
+            string link = Path.Combine(legacy, "Links", "ab12cd34", "App.lnk");
+            Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+            File.WriteAllText(link, "x");
+            File.WriteAllText(Path.Combine(legacy, "groups.json"),
+                "{\"groups\":[{\"id\":\"g\",\"name\":\"Old\",\"items\":[{\"name\":\"App\",\"targetPath\":\"" +
+                link.Replace("\\", "\\\\") + "\"}]}]}");
+            string appData = _dir.File("AppData2");
+            var service = new ConfigService(appData);
+
+            using (new FileStream(link, FileMode.Open, FileAccess.Read, FileShare.None)) // unreadable while locked
+            {
+                Assert.Null(service.TryImportFrom(legacy));
+            }
+
+            Assert.Contains("could not be copied", service.LastError);
+            Assert.NotNull(service.TryImportFrom(legacy)); // works once the file is readable again
+        }
+
+        [Fact]
+        public void Review3_03_leftover_stack_icons_are_cleaned_but_used_and_newest_ones_kept()
+        {
+            string icons = _dir.File("Icons3");
+            Directory.CreateDirectory(icons);
+            string Make(string name, int minutesOld)
+            {
+                string path = Path.Combine(icons, name);
+                File.WriteAllText(path, "x");
+                File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-minutesOld));
+                return path;
+            }
+            string olderLeftover = Make("stackbar_g1_AAAA0001.ico", 10);
+            string pinned = Make("stackbar_g1_AAAA0002.ico", 60);
+            string leftover = Make("stackbar_g1_AAAA0003.ico", 30);
+            string newest = Make("stackbar_g1_AAAA0004.ico", 3);
+            string otherStack = Make("stackbar_g10_AAAA0005.ico", 60);
+
+            ShortcutService.CleanUpUnusedGroupIcons(new[] { new AppGroup { Id = "g1" } }, icons,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { pinned });
+
+            Assert.False(File.Exists(leftover));
+            Assert.False(File.Exists(olderLeftover));
+            Assert.True(File.Exists(pinned));      // a pin still uses it
+            Assert.True(File.Exists(newest));      // the stack's current icon
+            Assert.True(File.Exists(otherStack));  // "g10" is another stack, not a "g1" file
+
+            string justWritten = Make("stackbar_g1_AAAA0006.ico", 0);
+            Make("stackbar_g1_AAAA0007.ico", -1); // even newer
+            ShortcutService.CleanUpUnusedGroupIcons(new[] { new AppGroup { Id = "g1" } }, icons, new HashSet<string>());
+            Assert.True(File.Exists(justWritten)); // under two minutes old: another writer may be using it
+        }
+
         // ---------- B-28: refreshing must not change special shortcuts ----------
 
         private string CreateTarget(string name, int size)

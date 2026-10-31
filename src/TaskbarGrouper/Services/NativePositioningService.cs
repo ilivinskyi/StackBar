@@ -141,6 +141,43 @@ namespace TaskbarGrouper.Services
         internal static bool IsTaskbarClassName(string className) =>
             className == "Shell_TrayWnd" || className == "Shell_SecondaryTrayWnd";
 
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int virtualKey);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr WindowFromPoint(POINT point);
+
+        public static bool IsForegroundWindow(IntPtr hwnd) => GetForegroundWindow() == hwnd;
+
+        /// <summary>Left, right or middle mouse button currently held down (anywhere on screen).</summary>
+        public static bool IsMouseButtonDown()
+        {
+            return (GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0 || (GetAsyncKeyState(0x04) & 0x8000) != 0;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+        /// <summary>
+        /// Cursor over one of this process's windows (the flyout, or popups it owns such as its context menu).
+        /// </summary>
+        public static bool IsCursorOverOwnWindow()
+        {
+            GetCursorPos(out POINT pt);
+            IntPtr hwnd = WindowFromPoint(pt);
+            if (hwnd == IntPtr.Zero) return false;
+            GetWindowThreadProcessId(hwnd, out uint pid);
+            return pid == (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+        }
+
+        public static bool IsCursorOverTaskbar()
+        {
+            GetCursorPos(out POINT pt);
+            IntPtr root = GetAncestor(WindowFromPoint(pt), 2 /* GA_ROOT */);
+            var name = new System.Text.StringBuilder(64);
+            return root != IntPtr.Zero && GetClassName(root, name, name.Capacity) > 0 && IsTaskbarClassName(name.ToString());
+        }
+
         /// <summary>True if the taskbar has just taken the foreground (the user clicked on it).</summary>
         public static bool IsTaskbarInForeground()
         {

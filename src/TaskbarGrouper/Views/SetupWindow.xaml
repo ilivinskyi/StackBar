@@ -42,11 +42,8 @@
                                 DockPanel.Dock="Right"
                                 Content="Browse..."
                                 Click="BrowseFolder_Click"
+                                Style="{StaticResource SurfaceBtn}"
                                 Padding="10,4"
-                                Background="#2A2C3C"
-                                Foreground="White"
-                                BorderThickness="0"
-                                Cursor="Hand"
                                 Margin="8,0,0,0"/>
                         <TextBlock x:Name="StatusLabel"
                                    Text="%LocalAppData%\Programs\StackBar"
@@ -64,29 +61,20 @@
             <Button x:Name="UninstallBtn"
                     Content="Uninstall..."
                     Click="Uninstall_Click"
+                    Style="{StaticResource SurfaceBtn}"
                     Padding="14,8"
-                    Background="#282A38"
-                    Foreground="#FF8080"
-                    BorderThickness="0"
-                    Cursor="Hand"/>
+                    Foreground="#FF8080"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Cancel"
                         Click="Cancel_Click"
+                        Style="{StaticResource SurfaceBtn}"
                         Padding="16,8"
-                        Margin="0,0,8,0"
-                        Background="#282A38"
-                        Foreground="White"
-                        BorderThickness="0"
-                        Cursor="Hand"/>
+                        Margin="0,0,8,0"/>
                 <Button x:Name="InstallBtn"
                         Content="Install &amp; Launch"
                         Click="Install_Click"
-                        Padding="20,8"
-                        Background="#3A6DF0"
-                        Foreground="White"
-                        FontWeight="SemiBold"
-                        BorderThickness="0"
-                        Cursor="Hand"/>
+                        Style="{StaticResource PrimaryBtn}"
+                        Padding="20,8"/>
             </StackPanel>
         </DockPanel>
     </Grid>

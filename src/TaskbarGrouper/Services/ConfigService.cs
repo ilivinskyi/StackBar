@@ -315,25 +315,44 @@ namespace TaskbarGrouper.Services
                     set(_dir + value.Substring(other.Length));
             }
 
+            int failed = 0;
             foreach (var folder in new[] { "Links", "Icons", "Shortcuts" })
             {
-                CopyMissingFiles(Path.Combine(other, folder), Path.Combine(_dir, folder));
+                failed += CopyMissingFiles(Path.Combine(other, folder), Path.Combine(_dir, folder));
+            }
+            if (failed > 0)
+            {
+                // Stacks would point at files that were never copied: don't import half of them
+                LastError = $"{failed} file(s) could not be copied from {other}.";
+                AppLogger.Log("Import from " + other + " failed: " + LastError);
+                return null;
             }
 
             imported.MigrationVersion = Math.Max(imported.MigrationVersion, 0);
             return Save(imported) ? imported : null;
         }
 
-        private static void CopyMissingFiles(string from, string to)
+        /// <returns>How many files could not be copied.</returns>
+        private static int CopyMissingFiles(string from, string to)
         {
-            if (!Directory.Exists(from)) return;
-            foreach (var file in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
+            if (!Directory.Exists(from)) return 0;
+            int failed = 0;
+            foreach (var file in ShortcutService.EnumerateFilesSafely(from, "*"))
             {
-                string destination = to + file.Substring(from.Length);
-                if (File.Exists(destination)) continue;
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                File.Copy(file, destination);
+                try
+                {
+                    string destination = to + file.Substring(from.Length);
+                    if (File.Exists(destination)) continue;
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    File.Copy(file, destination);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    AppLogger.Log("Could not copy " + file + ": " + ex.Message);
+                }
             }
+            return failed;
         }
 
         /// <summary>

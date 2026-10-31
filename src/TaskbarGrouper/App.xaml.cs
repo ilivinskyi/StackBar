@@ -60,7 +60,6 @@ namespace TaskbarGrouper
             // can never be overwritten by a stale copy saved from another.
             _configService = new ConfigService();
             _config = _configService.LoadOrCreateDefault();
-            OfferLegacyDataImport();
 
             // Cheap (a few file copies, once) and must finish before any flyout launches an item.
             // The old copies are deleted only once the config pointing at the new ones is safely on disk.
@@ -97,6 +96,11 @@ namespace TaskbarGrouper
         /// the stacks there. Since portable mode now needs the explicit marker, those stacks would seem to
         /// vanish; offer (once) to bring them over.
         /// </summary>
+        /// <remarks>
+        /// Runs from the idle-time maintenance, i.e. after the IPC listener and tray icon are up, so pin clicks
+        /// while the question is open are not lost. The question is not asked again once answered "No" or
+        /// once the import succeeded; after a failed import it is asked again on the next start.
+        /// </remarks>
         private void OfferLegacyDataImport()
         {
             if (AppInfo.IsPortableMode) return;
@@ -105,33 +109,58 @@ namespace TaskbarGrouper
                 string legacyDir = Path.Combine(AppInfo.BaseDirectory, "data");
                 string marker = Path.Combine(_configService.AppDataDirectory, "legacy-data-checked");
                 if (File.Exists(marker) || !File.Exists(Path.Combine(legacyDir, "groups.json"))) return;
-                File.WriteAllText(marker, legacyDir);
 
                 var answer = MessageBox.Show(
                     $"StackBar found stacks saved by an earlier version in:\n{legacyDir}\n\n" +
                     "Load them now? Your current stacks will be replaced (the old folder is left untouched).",
                     "StackBar", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (answer != MessageBoxResult.Yes) return;
+                if (answer != MessageBoxResult.Yes)
+                {
+                    File.WriteAllText(marker, legacyDir);
+                    return;
+                }
 
                 var imported = _configService.TryImportFrom(legacyDir);
-                if (imported != null)
+                if (imported == null)
                 {
-                    _config = imported;
-                }
-                else
-                {
-                    MessageBox.Show("Those stacks could not be imported (see the log for details).", "StackBar",
+                    MessageBox.Show("Those stacks could not be imported:\n" + (_configService.LastError ?? "unknown error") +
+                        "\n\nStackBar will offer it again next time it starts.", "StackBar",
                         MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
                 }
+
+                File.WriteAllText(marker, legacyDir);
+                if (ShortcutService.MigrateFlatLinkCopies(imported, _configService.AppDataDirectory, out var obsolete) &&
+                    _configService.Save(imported))
+                {
+                    ShortcutService.DeleteFiles(obsolete);
+                }
+                SwitchConfig(imported);
             }
             catch (Exception ex)
             {
                 AppLogger.Log("Legacy data import failed: " + ex);
+                MessageBox.Show("Those stacks could not be imported:\n" + ex.Message, "StackBar",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        /// <summary>Replaces the shared config; windows showing the old one are closed or reopened.</summary>
+        private void SwitchConfig(AppConfig config)
+        {
+            _config = config;
+            if (_activeFlyout != null && _activeFlyout.IsVisible) _activeFlyout.Close();
+            if (_mainWindow != null && _mainWindow.IsVisible)
+            {
+                _mainWindow.Close();
+                _mainWindow = null;
+                ShowManagerWindow(null);
             }
         }
 
         private void RunStartupMaintenance()
         {
+            OfferLegacyDataImport();
             try
             {
                 // One-time: may scan every installed app, so it must not run again on each start

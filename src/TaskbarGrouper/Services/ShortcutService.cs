@@ -499,6 +499,9 @@ namespace TaskbarGrouper.Services
                 if (!Directory.Exists(pinnedDir)) return;
 
                 bool changed = false;
+                string iconsDir = Path.Combine(appDataDir, "Icons");
+                var iconsInUse = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string taggedPrefix = GroupAumidPrefix(appDataDir);
                 foreach (var file in Directory.GetFiles(pinnedDir, "*.lnk"))
                 {
                     try
@@ -510,18 +513,30 @@ namespace TaskbarGrouper.Services
                             var ownership = ClassifyLoadedPin(link, appDataDir, out var groupId);
                             if (ownership == PinOwnership.NotOurs) continue;
 
+                            var iconSb = new StringBuilder(1024);
+                            link.GetIconLocation(iconSb, iconSb.Capacity, out _);
+                            string currentIcon = Environment.ExpandEnvironmentVariables(iconSb.ToString());
+                            iconsInUse.Add(currentIcon);
+
                             var group = groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
                             if (group == null) continue;
 
-                            var iconSb = new StringBuilder(1024);
-                            link.GetIconLocation(iconSb, iconSb.Capacity, out _);
-                            bool iconMissing = !File.Exists(Environment.ExpandEnvironmentVariables(iconSb.ToString()));
-                            if (ownership == PinOwnership.Ours && !iconMissing) continue;
+                            // Portable pins made before pins were tagged carry "StackBar.Group.<id>": tag them now,
+                            // so they are still recognised after the portable folder moves
+                            bool retag = AppInfo.IsPortableMode &&
+                                         !string.Equals(ReadAppUserModelId(link), taggedPrefix + group.Id, StringComparison.OrdinalIgnoreCase);
+                            bool iconMissing = !File.Exists(currentIcon);
+                            if (ownership == PinOwnership.Ours && !iconMissing && !retag) continue;
 
-                            string icoPath = IconHelper.GenerateGroupIcoFile(group, Path.Combine(appDataDir, "Icons"));
-                            link.SetPath(AppInfo.ExePath);
-                            link.SetWorkingDirectory(Path.GetDirectoryName(AppInfo.ExePath) ?? string.Empty);
-                            link.SetIconLocation(icoPath, 0);
+                            if (ownership == PinOwnership.Orphaned || iconMissing)
+                            {
+                                string icoPath = IconHelper.GenerateGroupIcoFile(group, iconsDir);
+                                iconsInUse.Add(icoPath);
+                                link.SetPath(AppInfo.ExePath);
+                                link.SetWorkingDirectory(Path.GetDirectoryName(AppInfo.ExePath) ?? string.Empty);
+                                link.SetIconLocation(icoPath, 0);
+                            }
+                            if (retag) SetAppUserModelId(link, taggedPrefix + group.Id);
                             ((IPersistFile)link).Save(file, false);
                             try { File.SetLastWriteTimeUtc(file, DateTime.UtcNow); } catch { }
                             changed = true;
@@ -535,8 +550,72 @@ namespace TaskbarGrouper.Services
                 }
 
                 if (changed) NotifyTaskbarIconsChanged();
+
+                // Generated shortcuts not pinned yet (Shortcuts\) use these icons too
+                string shortcutsDir = Path.Combine(appDataDir, "Shortcuts");
+                if (Directory.Exists(shortcutsDir))
+                {
+                    foreach (var file in Directory.GetFiles(shortcutsDir, "*.lnk"))
+                    {
+                        try
+                        {
+                            var link = (IShellLinkW)new ShellLink();
+                            try
+                            {
+                                ((IPersistFile)link).Load(file, 0);
+                                var iconSb = new StringBuilder(1024);
+                                link.GetIconLocation(iconSb, iconSb.Capacity, out _);
+                                iconsInUse.Add(Environment.ExpandEnvironmentVariables(iconSb.ToString()));
+                            }
+                            finally
+                            {
+                                Marshal.FinalReleaseComObject(link);
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                CleanUpUnusedGroupIcons(groups, iconsDir, iconsInUse);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Removes stack icons left over from bursts of edits (each edit writes a new versioned .ico; files
+        /// younger than two minutes are kept at write time). Keeps every icon a pin uses and each stack's newest.
+        /// </summary>
+        internal static void CleanUpUnusedGroupIcons(IEnumerable<AppGroup> groups, string iconsDir, ISet<string> iconsInUse)
+        {
+            if (!Directory.Exists(iconsDir)) return;
+            foreach (var group in groups)
+            {
+                var files = Directory.GetFiles(iconsDir, $"stackbar_{group.Id}_*.ico")
+                    .Select(f => new FileInfo(f))
+                    .OrderByDescending(f => f.LastWriteTimeUtc)
+                    .ToList();
+                foreach (var file in files.Skip(1))
+                {
+                    if (iconsInUse.Contains(file.FullName)) continue;
+                    if (DateTime.UtcNow - file.LastWriteTimeUtc < TimeSpan.FromMinutes(2)) continue;
+                    try { file.Delete(); } catch { }
+                }
+            }
+        }
+
+        private static void SetAppUserModelId(object link, string aumid)
+        {
+            if (!(link is IPropertyStore store)) return;
+            var key = AppUserModelIdKey;
+            var value = new PROPVARIANT { vt = 31, pwszVal = Marshal.StringToCoTaskMemUni(aumid) };
+            try
+            {
+                store.SetValue(ref key, ref value);
+                store.Commit();
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(value.pwszVal);
+            }
         }
 
         /// <summary>

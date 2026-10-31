@@ -52,6 +52,7 @@
                             <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                       Foreground="White"
                                       Margin="4,5"
+                                      HorizontalContentAlignment="Stretch"
                                       VerticalContentAlignment="Center">
                                 <DockPanel HorizontalAlignment="Stretch" Margin="0,0,8,0">
                                     <Border DockPanel.Dock="Right"
@@ -82,28 +83,18 @@
         <DockPanel Grid.Row="3" Margin="0,14,0,0">
             <Button Content="Select All"
                     Click="SelectAll_Click"
-                    Padding="12,7"
-                    Background="#282A38"
-                    Foreground="White"
-                    BorderThickness="0"
-                    Cursor="Hand"/>
+                    Style="{StaticResource SurfaceBtn}"
+                    Padding="12,7"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Cancel"
                         Click="Cancel_Click"
+                        Style="{StaticResource SurfaceBtn}"
                         Padding="14,7"
-                        Margin="0,0,8,0"
-                        Background="#282A38"
-                        Foreground="White"
-                        BorderThickness="0"
-                        Cursor="Hand"/>
+                        Margin="0,0,8,0"/>
                 <Button Content="Import Checked"
                         Click="Import_Click"
-                        Padding="16,7"
-                        Background="#3A6DF0"
-                        Foreground="White"
-                        FontWeight="SemiBold"
-                        BorderThickness="0"
-                        Cursor="Hand"/>
+                        Style="{StaticResource PrimaryBtn}"
+                        Padding="16,7"/>
             </StackPanel>
         </DockPanel>
     </Grid>

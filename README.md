@@ -30,7 +30,9 @@
   - **Done Button / Esc**: Tap *Done* or press `Escape` to leave Jiggle Mode.
 - **Intelligent Store App & Friendly Name Resolution**: Resolves technical package IDs (`com.lencx`, `Claude_pzs...`, `Microsoft.WindowsTerminal...`) to clean localized application names, and strips internal hex prefixes from imported shortcuts.
 - **Typo-Tolerant Application Search**: Importer search features letter-collapse tolerance (e.g. typing "whatsap" matches "WhatsApp") and matches against both application display names and target package paths.
-- **Offline On-Demand Launching**: Pinned taskbar shortcuts work independently even when StackBar is not running in the background tray. Clicking any pinned icon cold-starts the app and opens the flyout; shortcut repair and link migration run after the flyout is shown.
+- **Offline On-Demand Launching**: Pinned taskbar shortcuts work even when StackBar is not running in the tray: clicking one starts StackBar and opens the flyout.
+  Before the flyout appears StackBar only loads its settings (and, once after an upgrade, moves its shortcut copies to the new layout).
+  Pin repair, refreshing outdated shortcuts and the one-time offer to import stacks from an older version run afterwards.
 - **In-Place Flyout Renaming**: Click the folder title or the `✏` pencil next to it to rename the stack inline.
   Save with the `✓` button or `Enter`, cancel with the `✕` button or `Esc`.
 - **Studio Quick-Edit Button**: Click the `⚙` button in the flyout header to open that exact stack in StackBar Studio.

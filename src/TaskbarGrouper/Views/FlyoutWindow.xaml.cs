@@ -150,6 +150,7 @@ namespace TaskbarGrouper.Views
         private bool _isJiggleMode;
         private int _modalDepth;
         private System.Windows.Threading.DispatcherTimer? _longPressTimer;
+        private System.Windows.Threading.DispatcherTimer? _outsideClickTimer;
 
         // Press state, recorded on mouse down; a drag only starts once the pointer actually moves
         private Point _pressStartPos;
@@ -292,6 +293,34 @@ namespace TaskbarGrouper.Views
             }
 
             PlayEntranceAnimation(edge == NativePositioningService.TaskbarEdge.Top);
+            StartOutsideClickFallback(hwnd);
+        }
+
+        /// <summary>
+        /// Closing on an outside click relies on Deactivated, which never fires if Windows refused to give the
+        /// flyout focus (foreground lock). Only in that case, watch for a mouse click outside the flyout instead.
+        /// </summary>
+        private void StartOutsideClickFallback(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero || NativePositioningService.IsForegroundWindow(hwnd)) return;
+
+            _outsideClickTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+            _outsideClickTimer.Tick += (s, e) =>
+            {
+                if (_isClosing || IsActive)
+                {
+                    // Got focus after all: the normal Deactivated handling takes over
+                    _outsideClickTimer?.Stop();
+                    return;
+                }
+                if (_modalDepth == 0 && _dragVm == null &&
+                    NativePositioningService.IsMouseButtonDown() && !NativePositioningService.IsCursorOverOwnWindow())
+                {
+                    ClosedByTaskbarClick = NativePositioningService.IsCursorOverTaskbar();
+                    Close();
+                }
+            };
+            _outsideClickTimer.Start();
         }
 
         private void PlayEntranceAnimation(bool fromTop)
@@ -329,6 +358,7 @@ namespace TaskbarGrouper.Views
             if (GroupTitleBox.Visibility == Visibility.Visible) CommitRename();
             _isClosing = true;
             _longPressTimer?.Stop();
+            _outsideClickTimer?.Stop();
         }
 
         private void Window_KeyDown(object sender, KeyEventArgs e)
