@@ -3,47 +3,38 @@ param([string]$Version)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-Write-Host "1/3 Compiling StackBar (.NET Framework 4.8)..." -ForegroundColor Cyan
-$buildOutDir = Join-Path $root "src\TaskbarGrouper\bin\Release\net48"
+$project = "$root\src\TaskbarGrouper\TaskbarGrouper.csproj"
 $versionArgs = @()
 if ($Version) { $versionArgs += "-p:Version=$Version" }
-dotnet build "$root\src\TaskbarGrouper\TaskbarGrouper.csproj" -c Release --no-restore @versionArgs
-# $ErrorActionPreference does not cover native exit codes in Windows PowerShell 5.1:
-# without this check a failed build would package the previous exe and still print "Success!"
-if ($LASTEXITCODE -ne 0) { throw "Build failed (exit code $LASTEXITCODE); nothing was packaged." }
-if (-not (Test-Path (Join-Path $buildOutDir "StackBar.exe"))) { throw "Build output not found in $buildOutDir" }
 
-Write-Host "2/3 Staging standalone artifacts..." -ForegroundColor Cyan
+function Build-StackBar([string]$label, [string]$outDir, [string[]]$extraArgs) {
+    Write-Host $label -ForegroundColor Cyan
+    # Out-Host keeps dotnet's log on screen instead of in the function's return value
+    dotnet build $project -c Release --no-restore @versionArgs @extraArgs | Out-Host
+    # $ErrorActionPreference does not cover native exit codes in Windows PowerShell 5.1:
+    # without this check a failed build would package the previous exe and still print "Success!"
+    if ($LASTEXITCODE -ne 0) { throw "Build failed (exit code $LASTEXITCODE); nothing was packaged." }
+    $exe = Join-Path $root "$outDir\StackBar.exe"
+    if (-not (Test-Path $exe)) { throw "Build output not found: $exe" }
+    return $exe
+}
+
+$appExe = Build-StackBar "1/3 Compiling StackBar (.NET Framework 4.8)..." "src\TaskbarGrouper\bin\Release\net48" @()
+# The portable build runs portable under any file name, so it needs no .portable marker or data folder next to it
+$portableExe = Build-StackBar "2/3 Compiling StackBar Portable Edition..." "src\TaskbarGrouper\bin\Portable\Release\net48" @("-p:StackBarEdition=Portable")
+
+Write-Host "3/3 Staging artifacts..." -ForegroundColor Cyan
 $artifactsDir = Join-Path $root "artifacts"
 if (Test-Path $artifactsDir) {
     Get-ChildItem -Path $artifactsDir -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
 
-$appExe = Join-Path $buildOutDir "StackBar.exe"
-# Standard App
 Copy-Item $appExe (Join-Path $artifactsDir "StackBar.exe") -Force
-# Setup / Installer
 Copy-Item $appExe (Join-Path $artifactsDir "StackBar-Setup.exe") -Force
-
-Write-Host "3/3 Building StackBar Portable package..." -ForegroundColor Cyan
-$portableDir = Join-Path $artifactsDir "StackBar-Portable"
-New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $portableDir "data") | Out-Null
-
-# Copy exe and flag file
-Copy-Item $appExe (Join-Path $portableDir "StackBar-Portable.exe") -Force
-Set-Content -Path (Join-Path $portableDir ".portable") -Value "StackBar Portable Mode Flag"
-
-# Also package as zip for clean portability
-$zipPath = Join-Path $artifactsDir "StackBar-Portable.zip"
-if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($portableDir, $zipPath)
+Copy-Item $portableExe (Join-Path $artifactsDir "StackBar-Portable.exe") -Force
 
 Write-Host "Success! Created artifacts in: $artifactsDir" -ForegroundColor Green
 Write-Host "  - StackBar.exe (Standard App)" -ForegroundColor Green
 Write-Host "  - StackBar-Setup.exe (Self-Installer / Update / Uninstall)" -ForegroundColor Green
-Write-Host "  - StackBar-Portable/ (Folder: runs isolated with ./data/ directory)" -ForegroundColor Green
-Write-Host "  - StackBar-Portable.zip (Zipped Portable distribution)" -ForegroundColor Green
+Write-Host "  - StackBar-Portable.exe (Portable Edition: keeps everything in a data folder next to itself)" -ForegroundColor Green

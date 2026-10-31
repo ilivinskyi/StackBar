@@ -65,6 +65,6 @@ jobs:
             gh @createArgs
             if ($LASTEXITCODE -ne 0) { throw "Could not create release $env:TAG" }
           }
-          # Only the two distributables: never the loose portable folder, its .portable flag or data/
-          gh release upload $env:TAG artifacts/StackBar-Setup.exe artifacts/StackBar-Portable.zip --clobber
+          # Only the two distributables (StackBar.exe is the same binary as StackBar-Setup.exe)
+          gh release upload $env:TAG artifacts/StackBar-Setup.exe artifacts/StackBar-Portable.exe --clobber
           if ($LASTEXITCODE -ne 0) { throw "Could not upload assets to $env:TAG" }

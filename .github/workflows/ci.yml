@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload test build
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: StackBar-${{ github.sha }}
           path: artifacts/

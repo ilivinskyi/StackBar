@@ -79,7 +79,7 @@ namespace TaskbarGrouper.Views
             RepairShortcutsCheck.IsChecked = _config.RepairAppShortcuts;
             if (AppInfo.IsPortableMode)
             {
-                ModeBadgeText.Text = "Portable Edition v1.1";
+                ModeBadgeText.Text = $"Portable Edition v{AppInfo.DisplayVersion}";
                 // Don't show the installed copy's setting: Portable Edition never registers itself
                 RunAtStartupCheck.IsChecked = false;
                 RunAtStartupCheck.IsEnabled = false;
@@ -87,6 +87,7 @@ namespace TaskbarGrouper.Views
             }
             else
             {
+                ModeBadgeText.Text = $"Taskbar Folder Studio v{AppInfo.DisplayVersion}";
                 var startup = StartupService.GetState();
                 RunAtStartupCheck.IsChecked = startup == StartupService.StartupState.On;
                 if (startup == StartupService.StartupState.Stale)

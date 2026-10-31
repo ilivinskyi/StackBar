@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Diagnostics;
 using System.Reflection;
 
@@ -40,20 +41,27 @@ namespace TaskbarGrouper.Services
             {
                 if (!_isPortable.HasValue)
                 {
-                    _isPortable = DetectPortable(BaseDirectory, ExePath);
+                    _isPortable = DetectPortable(BaseDirectory, ExePath, BuildEdition);
                 }
                 return _isPortable.Value;
             }
         }
 
+        /// <summary>"Portable" in StackBar-Portable.exe (built with -p:StackBarEdition=Portable), otherwise null.</summary>
+        internal static string? BuildEdition => typeof(AppInfo).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "StackBarEdition")?.Value;
+
         /// <summary>
-        /// Portable only on an explicit signal: the ".portable" / "portable.txt" marker (build.ps1 ships it)
-        /// or the exact portable exe name. A folder that merely contains a "data" subfolder (a custom install
-        /// folder, a cluttered Downloads folder) must not silently switch an installed copy to portable.
+        /// Portable only on an explicit signal: the portable build of the exe (works under any file name),
+        /// or, for portable folders made by older versions, the ".portable" / "portable.txt" marker or the exact
+        /// portable exe name. A folder that merely contains a "data" subfolder (a custom install folder,
+        /// a cluttered Downloads folder) must not silently switch an installed copy to portable.
         /// </summary>
-        internal static bool DetectPortable(string baseDirectory, string exePath)
+        internal static bool DetectPortable(string baseDirectory, string exePath, string? buildEdition = null)
         {
-            return File.Exists(Path.Combine(baseDirectory, ".portable"))
+            return string.Equals(buildEdition, "Portable", StringComparison.OrdinalIgnoreCase)
+                   || File.Exists(Path.Combine(baseDirectory, ".portable"))
                    || File.Exists(Path.Combine(baseDirectory, "portable.txt"))
                    || string.Equals(Path.GetFileNameWithoutExtension(exePath), "StackBar-Portable", StringComparison.OrdinalIgnoreCase);
         }
