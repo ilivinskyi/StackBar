@@ -161,6 +161,20 @@ namespace TaskbarGrouper.Services
         }
 
         [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int index);
+
+        /// <summary>
+        /// The primary (drag) button is held right now. GetAsyncKeyState reads physical buttons, so with
+        /// swapped buttons that is the right one. Unlike <see cref="IsMouseButtonDown"/> this has no side effect.
+        /// </summary>
+        public static bool IsPrimaryButtonHeld()
+        {
+            const int SM_SWAPBUTTON = 23;
+            int vk = GetSystemMetrics(SM_SWAPBUTTON) != 0 ? 0x02 : 0x01;
+            return (GetAsyncKeyState(vk) & 0x8000) != 0;
+        }
+
+        [DllImport("user32.dll")]
         private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
         /// <summary>
