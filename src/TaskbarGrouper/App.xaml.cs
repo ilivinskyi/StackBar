@@ -17,6 +17,7 @@ namespace TaskbarGrouper
         private AppConfig _config = null!;
         private IpcService? _ipcService;
         private System.Windows.Forms.NotifyIcon? _trayIcon;
+        private TaskbarDragWatcher? _dragWatcher;
         private MainWindow? _mainWindow;
         private FlyoutWindow? _activeFlyout;
         private bool _isExiting;
@@ -72,6 +73,10 @@ namespace TaskbarGrouper
             // Start resident IPC listener
             _ipcService = new IpcService(OnIpcOpenGroupRequested, () => ShowManagerWindow(null), ExitApplication);
             InitializeTrayIcon();
+
+            // Dragging files or apps over a pinned stack springs its flyout open to drop them in
+            _dragWatcher = new TaskbarDragWatcher(ShortcutService.GroupAumidPrefix(_configService.AppDataDirectory));
+            _dragWatcher.SpringOpen += (id, x, y) => Dispatcher.BeginInvoke(new Action(() => OpenGroupFlyoutForDrop(id, x, y)));
 
             if (!string.IsNullOrEmpty(groupId))
             {
@@ -289,7 +294,30 @@ namespace TaskbarGrouper
                 _activeFlyout.Close();
             }
 
-            var flyout = new FlyoutWindow(group, _config, _configService, cursorX, cursorY, id => ShowManagerWindow(id));
+            ShowFlyout(group, cursorX, cursorY, openedForDrop: false);
+        }
+
+        /// <summary>Something is being dragged over the stack's pin: open its flyout to drop into.</summary>
+        private void OpenGroupFlyoutForDrop(string groupId, int cursorX, int cursorY)
+        {
+            if (_isExiting) return;
+            // Already open for this stack: hovering the pin again must not close it (that is a click's job)
+            if (_activeFlyout != null && _activeFlyout.IsVisible &&
+                string.Equals(_activeFlyout.GroupId, groupId, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            // A pin left over from a deleted stack: a drag passing over it should not pop up a message
+            var group = _config.Groups.FirstOrDefault(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (group == null) return;
+
+            if (_activeFlyout != null && _activeFlyout.IsVisible) _activeFlyout.Close();
+            ShowFlyout(group, cursorX, cursorY, openedForDrop: true);
+        }
+
+        private void ShowFlyout(AppGroup group, int cursorX, int cursorY, bool openedForDrop)
+        {
+            string groupId = group.Id;
+            var flyout = new FlyoutWindow(group, _config, _configService, cursorX, cursorY, id => ShowManagerWindow(id), openedForDrop);
             _activeFlyout = flyout;
             flyout.Closed += (_, __) =>
             {
@@ -364,6 +392,7 @@ namespace TaskbarGrouper
                     _trayIcon.Dispose();
                 }
                 _ipcService?.Dispose();
+                _dragWatcher?.Dispose();
                 Shutdown();
             }));
         }
@@ -379,6 +408,7 @@ namespace TaskbarGrouper
                     _trayIcon.Dispose();
                 }
                 _ipcService?.Dispose();
+                _dragWatcher?.Dispose();
             }
             base.OnExit(e);
         }

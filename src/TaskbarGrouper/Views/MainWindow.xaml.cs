@@ -949,22 +949,72 @@ namespace TaskbarGrouper.Views
                 }
             }
 
-            // 2. Windows Explorer Drag & Drop of Files, Shortcuts, or Folders
-            if (e.Data.GetDataPresent(DataFormats.FileDrop))
-            {
-                var files = e.Data.GetData(DataFormats.FileDrop) as string[];
-                if (files == null) return;
+            // 2. Files, shortcuts and folders from Explorer, or apps dragged out of the Start menu
+            AddDroppedItems(_selectedGroup, DropImport.GetSourcePaths(e.Data));
+        }
 
-                int count = 0;
-                var duplicates = new ShortcutService.DuplicateIndex(_selectedGroup);
-                foreach (var file in files)
-                {
-                    if (TryAddItem(file, null, duplicates)) count++;
-                }
-                SyncGroupAndTaskbarIcon(_selectedGroup);
-                RefreshItemsList();
-                StatusText.Text = $"Added {count} item(s) to '{_selectedGroup.Name}'.";
+        private void AddDroppedItems(AppGroup group, IReadOnlyList<string> paths)
+        {
+            if (paths.Count == 0) return;
+
+            var added = DropImport.AddToGroup(group, paths, group.Items.Count, _configService.AppDataDirectory, out int skipped);
+            if (added.Count > 0) SyncGroupAndTaskbarIcon(group);
+            if (group == _selectedGroup) RefreshItemsList();
+            RefreshGroupsList();
+            StatusText.Text = skipped > 0
+                ? $"Added {added.Count} item(s) to '{group.Name}' ({skipped} already in the stack)."
+                : $"Added {added.Count} item(s) to '{group.Name}'.";
+        }
+
+        // ---------- Dropping onto a stack in the sidebar ----------
+
+        private ListBoxItem? _dropTargetContainer;
+
+        private void GroupsListBox_DragOver(object sender, DragEventArgs e)
+        {
+            var container = DropImport.HasDroppableContent(e.Data) ? GroupContainerAt(e.GetPosition(GroupsListBox)) : null;
+            SetDropTarget(container);
+            e.Effects = container != null ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private void GroupsListBox_DragLeave(object sender, DragEventArgs e)
+        {
+            // DragLeave also fires when moving between child elements: only clear once outside the list
+            var p = e.GetPosition(GroupsListBox);
+            if (p.X < 0 || p.Y < 0 || p.X >= GroupsListBox.ActualWidth || p.Y >= GroupsListBox.ActualHeight)
+                SetDropTarget(null);
+        }
+
+        private void GroupsListBox_Drop(object sender, DragEventArgs e)
+        {
+            var group = GroupContainerAt(e.GetPosition(GroupsListBox))?.DataContext as AppGroup;
+            SetDropTarget(null);
+            e.Handled = true;
+            if (group == null) return;
+
+            // Importing copies shortcuts and reads icons: finish the drop first so the drag source is not kept waiting
+            var paths = DropImport.GetSourcePaths(e.Data);
+            Dispatcher.BeginInvoke(new Action(() => AddDroppedItems(group, paths)));
+        }
+
+        private ListBoxItem? GroupContainerAt(Point p)
+        {
+            var hit = GroupsListBox.InputHitTest(p) as DependencyObject;
+            while (hit != null && hit != GroupsListBox)
+            {
+                if (hit is ListBoxItem item) return item;
+                hit = VisualTreeHelper.GetParent(hit);
             }
+            return null;
+        }
+
+        private void SetDropTarget(ListBoxItem? container)
+        {
+            if (_dropTargetContainer == container) return;
+            if (_dropTargetContainer != null) _dropTargetContainer.Tag = null;
+            _dropTargetContainer = container;
+            if (container != null) container.Tag = "DropTarget";
         }
 
         private ManagerItemRowViewModel? GetItemUnderMouse(Point p)

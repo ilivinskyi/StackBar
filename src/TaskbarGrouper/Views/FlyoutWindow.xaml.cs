@@ -88,6 +88,9 @@ namespace TaskbarGrouper.Views
         }
 
         public Visibility DeleteBadgeVisibility => IsJiggling ? Visibility.Visible : Visibility.Collapsed;
+
+        /// <summary>The see-through tile that marks where dragged-in apps will land; not a real item.</summary>
+        public bool IsDropPlaceholder { get; set; }
     }
 
     public class DragAdorner : Adorner
@@ -163,15 +166,32 @@ namespace TaskbarGrouper.Views
         private bool _dragCancelled;
         private DateTime _reorderLockedUntil = DateTime.MinValue;
 
+        // Apps dragged in from outside (Explorer, the desktop, the Start menu)
+        private readonly bool _openedForDrop;
+        private bool _dropReceived;
+        private System.Windows.Threading.DispatcherTimer? _dropSessionTimer;
+        private FlyoutItemViewModel? _dropPlaceholder;
+        private IReadOnlyList<string>? _incomingPaths;
+        private List<FlyoutItemViewModel> _highlightedDuplicates = new List<FlyoutItemViewModel>();
+        private NativePositioningService.TaskbarEdge _edge;
+
         public int Columns => Polyfills.Clamp(_group.Columns, 2, 8);
 
         /// <summary>The flyout lost focus to the taskbar (e.g. its pin was clicked again).</summary>
         public bool ClosedByTaskbarClick { get; private set; }
 
+        public string GroupId => _group.Id;
+
+        /// <param name="openedForDrop">
+        /// Sprung open by a drag hovering over the stack's pin: the flyout must not take focus from the drag
+        /// source, and closes again if the drag ends somewhere else.
+        /// </param>
         public FlyoutWindow(AppGroup group, AppConfig config, ConfigService configService,
-            int? cursorX = null, int? cursorY = null, Action<string>? onEditRequested = null)
+            int? cursorX = null, int? cursorY = null, Action<string>? onEditRequested = null, bool openedForDrop = false)
         {
             InitializeComponent();
+            _openedForDrop = openedForDrop;
+            ShowActivated = !openedForDrop;
             _group = group;
             _config = config;
             _configService = configService;
@@ -267,6 +287,7 @@ namespace TaskbarGrouper.Views
         {
             var anchor = NativePositioningService.ResolveAnchor(_cursorX, _cursorY);
             var edge = anchor.Edge;
+            _edge = edge;
 
             // Caret visibility changes the window size, so set it before measuring and positioning
             TopCaretCanvas.Visibility = edge == NativePositioningService.TaskbarEdge.Top ? Visibility.Visible : Visibility.Collapsed;
@@ -284,16 +305,54 @@ namespace TaskbarGrouper.Views
 
             // The window stays invisible until it is at its final position (no flash at the old spot)
             Opacity = 1;
+            SizeChanged += Window_SizeChanged;
+            PlayEntranceAnimation(edge == NativePositioningService.TaskbarEdge.Top);
 
+            if (_openedForDrop)
+            {
+                StartDropSession();
+                return;
+            }
+            TakeFocus();
+        }
+
+        private void TakeFocus()
+        {
             Activate();
             var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             if (hwnd != IntPtr.Zero)
             {
                 IpcService.SetForegroundWindow(hwnd);
             }
-
-            PlayEntranceAnimation(edge == NativePositioningService.TaskbarEdge.Top);
             StartOutsideClickFallback(hwnd);
+        }
+
+        /// <summary>
+        /// A new row of tiles (or one fewer) changes the height: keep the edge next to the taskbar where it is,
+        /// so the flyout grows away from the taskbar instead of sliding under it.
+        /// </summary>
+        private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (!e.HeightChanged || _edge == NativePositioningService.TaskbarEdge.Top) return;
+            Top -= e.NewSize.Height - e.PreviousSize.Height;
+        }
+
+        /// <summary>
+        /// While the drag that opened the flyout goes on, the flyout stays unfocused. When the button is
+        /// released it either received the drop (then it behaves like a normally opened flyout) or the drag
+        /// ended elsewhere (then it closes).
+        /// </summary>
+        private void StartDropSession()
+        {
+            _dropSessionTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+            _dropSessionTimer.Tick += (s, e) =>
+            {
+                if (_isClosing || NativePositioningService.IsPrimaryButtonHeld()) return;
+                _dropSessionTimer?.Stop();
+                if (_dropReceived) TakeFocus();
+                else Close();
+            };
+            _dropSessionTimer.Start();
         }
 
         /// <summary>
@@ -363,6 +422,7 @@ namespace TaskbarGrouper.Views
             _isClosing = true;
             _longPressTimer?.Stop();
             _outsideClickTimer?.Stop();
+            _dropSessionTimer?.Stop();
         }
 
         private void Window_KeyDown(object sender, KeyEventArgs e)
@@ -691,6 +751,12 @@ namespace TaskbarGrouper.Views
 
         private void ItemButton_DragOver(object sender, DragEventArgs e)
         {
+            if (_dragVm == null && IsExternalDrag(e))
+            {
+                var over = (sender as FrameworkElement)?.DataContext as FlyoutItemViewModel;
+                ExternalDragOver(e, over);
+                return;
+            }
             if (_dragVm == null || !e.Data.GetDataPresent(ReorderDataFormat)) return;
             e.Effects = DragDropEffects.Move;
             e.Handled = true;
@@ -753,10 +819,17 @@ namespace TaskbarGrouper.Views
         {
             // The live order already reflects the drop position; RunReorderDrag commits it
             if (e.Data.GetDataPresent(ReorderDataFormat)) e.Handled = true;
+            else if (IsExternalDrag(e)) CommitExternalDrop(e);
         }
 
         private void RootBorder_DragOver(object sender, DragEventArgs e)
         {
+            if (_dragVm == null && IsExternalDrag(e))
+            {
+                // Over the header or a gap: keep the slot already shown, or offer the end of the stack
+                ExternalDragOver(e, null);
+                return;
+            }
             // Gaps between tiles still accept the drop (otherwise the cursor shows "not allowed")
             e.Effects = _dragVm != null && e.Data.GetDataPresent(ReorderDataFormat) ? DragDropEffects.Move : DragDropEffects.None;
             e.Handled = true;
@@ -764,7 +837,161 @@ namespace TaskbarGrouper.Views
 
         private void RootBorder_Drop(object sender, DragEventArgs e)
         {
+            if (_dragVm == null && IsExternalDrag(e)) CommitExternalDrop(e);
             e.Handled = true;
+        }
+
+        private void RootBorder_DragLeave(object sender, DragEventArgs e)
+        {
+            if (_dragVm != null) return;
+            // DragLeave also fires when moving from one tile to the next: only react once outside the card
+            var p = e.GetPosition(RootBorder);
+            if (p.X >= 0 && p.Y >= 0 && p.X < RootBorder.ActualWidth && p.Y < RootBorder.ActualHeight) return;
+            EndExternalDragPreview();
+        }
+
+        // ---------- Dropping apps in from outside ----------
+
+        private static bool IsExternalDrag(DragEventArgs e) =>
+            !e.Data.GetDataPresent(ReorderDataFormat) && DropImport.HasDroppableContent(e.Data);
+
+        private void ExternalDragOver(DragEventArgs e, FlyoutItemViewModel? over)
+        {
+            e.Handled = true;
+            if (_incomingPaths == null) BeginExternalDragPreview(e.Data);
+
+            if (_dropPlaceholder == null)
+            {
+                // Everything dragged is already in the stack (those tiles are highlighted)
+                e.Effects = DragDropEffects.None;
+                return;
+            }
+            e.Effects = DragDropEffects.Copy;
+
+            if (!_viewModels.Contains(_dropPlaceholder))
+            {
+                int at = over != null && !over.IsDropPlaceholder ? _viewModels.IndexOf(over) : _viewModels.Count;
+                AnimateReorder(() => _viewModels.Insert(Math.Max(0, at), _dropPlaceholder));
+                EmptyNotice.Visibility = Visibility.Collapsed;
+                _reorderLockedUntil = DateTime.UtcNow + ReorderAnimationDuration;
+                return;
+            }
+
+            if (over == null || over.IsDropPlaceholder || DateTime.UtcNow < _reorderLockedUntil) return;
+            int from = _viewModels.IndexOf(_dropPlaceholder);
+            int to = _viewModels.IndexOf(over);
+            if (from < 0 || to < 0 || from == to) return;
+            AnimateReorder(() => _viewModels.Move(from, to));
+            _reorderLockedUntil = DateTime.UtcNow + ReorderAnimationDuration;
+        }
+
+        /// <summary>
+        /// Reads what is being dragged once, when it first enters the flyout: apps not yet in the stack get a
+        /// placeholder tile; apps already in it get their tile highlighted instead.
+        /// </summary>
+        private void BeginExternalDragPreview(IDataObject data)
+        {
+            var paths = DropImport.GetSourcePaths(data);
+            _incomingPaths = paths;
+
+            var newPaths = new List<string>();
+            var existing = new List<FlyoutItemViewModel>();
+            var duplicates = new ShortcutService.DuplicateIndex(_group);
+            foreach (var path in paths)
+            {
+                if (!duplicates.Contains(path))
+                {
+                    newPaths.Add(path);
+                    continue;
+                }
+                var match = _viewModels.FirstOrDefault(vm => !vm.IsDropPlaceholder &&
+                    new ShortcutService.DuplicateIndex(new AppGroup { Items = { vm.Item } }).Contains(path));
+                if (match != null) existing.Add(match);
+            }
+
+            foreach (var vm in existing) vm.TileScale = 1.08;
+            _highlightedDuplicates = existing;
+            if (newPaths.Count == 0) return;
+
+            TaskbarGrouper.Models.GroupItem preview;
+            try
+            {
+                preview = ShortcutService.ParseShortcut(newPaths[0]);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log("Drop preview failed for " + newPaths[0] + ": " + ex.Message);
+                preview = new TaskbarGrouper.Models.GroupItem { Name = System.IO.Path.GetFileNameWithoutExtension(newPaths[0]), TargetPath = newPaths[0] };
+            }
+
+            string name = newPaths.Count > 1 ? $"{preview.Name} +{newPaths.Count - 1}" : preview.Name;
+            _dropPlaceholder = new FlyoutItemViewModel
+            {
+                Name = name,
+                ToolTipText = name,
+                TileHeight = _group.ShowLabels ? 82 : 62,
+                LabelVisibility = _group.ShowLabels ? Visibility.Visible : Visibility.Collapsed,
+                Item = preview,
+                Icon = IconHelper.ExtractIcon(preview),
+                TileOpacity = 0.55,
+                IsJiggling = _isJiggleMode,
+                IsDropPlaceholder = true
+            };
+        }
+
+        private void EndExternalDragPreview()
+        {
+            foreach (var vm in _highlightedDuplicates) vm.TileScale = 1.0;
+            _highlightedDuplicates = new List<FlyoutItemViewModel>();
+            if (_dropPlaceholder != null && _viewModels.Contains(_dropPlaceholder))
+            {
+                var placeholder = _dropPlaceholder;
+                AnimateReorder(() => _viewModels.Remove(placeholder));
+            }
+            EmptyNotice.Visibility = _group.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            _dropPlaceholder = null;
+            _incomingPaths = null;
+        }
+
+        private void CommitExternalDrop(DragEventArgs e)
+        {
+            e.Handled = true;
+            var paths = _incomingPaths ?? DropImport.GetSourcePaths(e.Data);
+            int insertAt = _dropPlaceholder != null && _viewModels.Contains(_dropPlaceholder)
+                ? _viewModels.IndexOf(_dropPlaceholder)
+                : _group.Items.Count;
+            bool hasNew = _dropPlaceholder != null;
+            e.Effects = hasNew ? DragDropEffects.Copy : DragDropEffects.None;
+            EndExternalDragPreview();
+            if (!hasNew) return;
+
+            _dropReceived = true;
+            // Importing copies shortcuts and reads icons: let the drag source finish its drop first
+            Dispatcher.BeginInvoke(new Action(() => AddDroppedApps(paths, insertAt)));
+        }
+
+        private void AddDroppedApps(IReadOnlyList<string> paths, int insertAt)
+        {
+            if (_isClosing) return;
+            var added = DropImport.AddToGroup(_group, paths, insertAt, _configService.AppDataDirectory, out _);
+            if (added.Count == 0) return;
+
+            PersistGroupChange();
+            PopulateViewModels();
+
+            // A short pop on the new tiles, so it is obvious where they went
+            var ease = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.4 };
+            foreach (var vm in _viewModels.Where(v => added.Contains(v.Item)))
+            {
+                ItemsGrid.UpdateLayout();
+                if (!(ItemsGrid.ItemContainerGenerator.ContainerFromItem(vm) is FrameworkElement c)) continue;
+                var scale = new ScaleTransform(1, 1);
+                c.RenderTransformOrigin = new Point(0.5, 0.5);
+                c.RenderTransform = scale;
+                var pop = new DoubleAnimation(0.6, 1.0, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease };
+                scale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
+                scale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
+            }
         }
 
         private void DeleteBadge_Click(object sender, RoutedEventArgs e)

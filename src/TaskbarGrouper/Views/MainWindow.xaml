@@ -128,7 +128,11 @@
                          HorizontalContentAlignment="Stretch"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         SelectionChanged="GroupsListBox_SelectionChanged">
+                         SelectionChanged="GroupsListBox_SelectionChanged"
+                         AllowDrop="True"
+                         DragOver="GroupsListBox_DragOver"
+                         DragLeave="GroupsListBox_DragLeave"
+                         Drop="GroupsListBox_Drop">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Padding" Value="0"/>
@@ -147,6 +151,12 @@
                                             <Trigger Property="IsSelected" Value="True">
                                                 <Setter TargetName="ItemBd" Property="Background" Value="#292C3E"/>
                                                 <Setter TargetName="ItemBd" Property="BorderBrush" Value="#3A6DF0"/>
+                                            </Trigger>
+                                            <!-- Files dragged over this stack (see GroupsListBox_DragOver) -->
+                                            <Trigger Property="Tag" Value="DropTarget">
+                                                <Setter TargetName="ItemBd" Property="Background" Value="#2A3150"/>
+                                                <Setter TargetName="ItemBd" Property="BorderBrush" Value="#6E95FF"/>
+                                                <Setter TargetName="ItemBd" Property="BorderThickness" Value="1.5"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>

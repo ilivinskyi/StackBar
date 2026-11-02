@@ -36,6 +36,7 @@
                 BorderThickness="1.2"
                 AllowDrop="True"
                 DragOver="RootBorder_DragOver"
+                DragLeave="RootBorder_DragLeave"
                 Drop="RootBorder_Drop"
                 Padding="16,14,16,14"
                 RenderTransformOrigin="0.5,1.0"
@@ -204,7 +205,7 @@
 
                 <!-- Empty State Message -->
                 <TextBlock x:Name="EmptyNotice"
-                           Text="This stack is empty. Open Studio to add apps."
+                           Text="This stack is empty. Drag apps here, or open Studio to add them."
                            Foreground="#77FFFFFF"
                            FontSize="12"
                            TextAlignment="Center"
