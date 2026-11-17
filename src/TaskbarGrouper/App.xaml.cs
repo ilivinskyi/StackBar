@@ -92,6 +92,7 @@ namespace TaskbarGrouper
             // Healing pinned shortcuts and migrating links touches every pinned .lnk and may scan all
             // installed apps; do it once the first window is up so a cold-start click opens instantly.
             Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(RunStartupMaintenance));
+            Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(PreloadFlyouts));
 
             Run();
         }
@@ -210,6 +211,51 @@ namespace TaskbarGrouper
             }
         }
 
+        /// <summary>
+        /// Without this, the first open of each stack after StackBar starts spent 60-320 ms extracting app icons
+        /// (and the very first flyout another ~100 ms building its window). Icons are cached as frozen images,
+        /// so they can be read on a background thread; the throwaway flyout then warms up the window code.
+        /// </summary>
+        private void PreloadFlyouts()
+        {
+            var icons = _config.Groups.SelectMany(g => g.Items)
+                .Select(i => (i.TargetPath, i.CustomIconPath, i.CustomIconIndex))
+                .ToList();
+            var thread = new System.Threading.Thread(() =>
+            {
+                foreach (var (target, customIcon, index) in icons)
+                {
+                    if (_isExiting) return;
+                    try { IconHelper.ExtractIcon(target, customIcon, index); }
+                    catch (Exception ex) { AppLogger.Log("Icon preload failed for " + target + ": " + ex.Message); }
+                }
+                Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(WarmUpFlyoutWindow));
+            })
+            {
+                IsBackground = true,
+                Name = "StackBar_IconPreload",
+                Priority = System.Threading.ThreadPriority.BelowNormal
+            };
+            // Shell icon extraction is apartment-threaded COM
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+        }
+
+        private void WarmUpFlyoutWindow()
+        {
+            var group = _config.Groups.FirstOrDefault();
+            if (group == null || _isExiting) return;
+            try
+            {
+                // Never shown: parsing the window and binding its tiles is what the first real open would pay for
+                new FlyoutWindow(group, _config, _configService).Close();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log("Flyout warm-up failed: " + ex.Message);
+            }
+        }
+
         private static void RunOnStaThread(Action work)
         {
             var thread = new System.Threading.Thread(() =>
@@ -273,6 +319,7 @@ namespace TaskbarGrouper
 
         private void OpenGroupFlyout(string groupId, int cursorX, int cursorY, DateTime? clientStartUtc = null)
         {
+            PerfTrace.Mark("resident.dispatched");
             if (string.Equals(_lastClosedGroupId, groupId, StringComparison.OrdinalIgnoreCase) &&
                 IsToggleClose(_lastClosedTimeUtc, clientStartUtc, DateTime.UtcNow, _lastClosedByTaskbarClick))
             {

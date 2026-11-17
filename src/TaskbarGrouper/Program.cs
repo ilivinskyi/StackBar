@@ -1,7 +1,5 @@
 using System;
-using System.Diagnostics;
 using System.IO;
-using System.Security.Principal;
 using System.Threading;
 using System.Runtime.CompilerServices;
 using TaskbarGrouper.Services;
@@ -15,14 +13,7 @@ namespace TaskbarGrouper
         [STAThread]
         public static void Main(string[] args)
         {
-            AppLogger.Initialize();
-
-            // Set AUMID so StackBar's own windows don't attach to clicked pinned shortcuts
-            try
-            {
-                SetCurrentProcessExplicitAppUserModelID("StackBar.App");
-            }
-            catch { }
+            PerfTrace.Mark("launcher.main");
 
             string? groupId = null;
             bool startMinimized = false;
@@ -55,13 +46,14 @@ namespace TaskbarGrouper
                 }
             }
 
-            // Fast Path: Clicking a pinned folder
+            // Fast Path: Clicking a pinned folder. This process only forwards the click to the resident
+            // instance, so everything before the send is kept to the bare minimum (no logging setup)
             if (!string.IsNullOrEmpty(groupId))
             {
                 NativePositioningService.GetCursorPos(out var pt);
-                long startTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
-                if (IpcService.SendCommand($"OPEN|{groupId}|{pt.X}|{pt.Y}|{startTicks}"))
+                if (IpcService.SendCommand($"OPEN|{groupId}|{pt.X}|{pt.Y}|{ProcessInfo.StartTimeUtcTicks}"))
                 {
+                    PerfTrace.Mark("launcher.sent");
                     return;
                 }
             }
@@ -74,11 +66,20 @@ namespace TaskbarGrouper
                 }
             }
 
+            AppLogger.Initialize();
+
+            // Set AUMID so StackBar's own windows don't attach to clicked pinned shortcuts
+            try
+            {
+                SetCurrentProcessExplicitAppUserModelID("StackBar.App");
+            }
+            catch { }
+
             // Only the resident app owns the single-instance mutex. Setup/uninstall must not take it,
             // otherwise the app that setup launches sees the mutex as taken and exits silently.
             if (!isSetup && !isUninstall)
             {
-                string userSid = WindowsIdentity.GetCurrent().User?.Value ?? "User";
+                string userSid = ProcessInfo.UserSid;
                 string modePrefix = AppInfo.IsPortableMode ? "Portable" : "Installed";
                 string mutexName = $"Local\\StackBar.{modePrefix}.{userSid}";
                 _instanceMutex = new Mutex(true, mutexName, out bool createdNew);
@@ -92,7 +93,7 @@ namespace TaskbarGrouper
                     NativePositioningService.GetCursorPos(out var cursor);
                     string command = string.IsNullOrEmpty(groupId)
                         ? "MANAGER"
-                        : $"OPEN|{groupId}|{cursor.X}|{cursor.Y}|{Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks}";
+                        : $"OPEN|{groupId}|{cursor.X}|{cursor.Y}|{ProcessInfo.StartTimeUtcTicks}";
                     IpcService.SendCommand(command, connectTimeoutMs: 1500);
                     return;
                 }
