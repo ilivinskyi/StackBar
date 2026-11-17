@@ -189,7 +189,9 @@ namespace TaskbarGrouper.Views
         public FlyoutWindow(AppGroup group, AppConfig config, ConfigService configService,
             int? cursorX = null, int? cursorY = null, Action<string>? onEditRequested = null, bool openedForDrop = false)
         {
+            PerfTrace.Mark("flyout.ctor");
             InitializeComponent();
+            PerfTrace.Mark("flyout.xaml");
             _openedForDrop = openedForDrop;
             ShowActivated = !openedForDrop;
             _group = group;
@@ -207,6 +209,7 @@ namespace TaskbarGrouper.Views
 
             ItemsGrid.ItemsSource = _viewModels;
             PopulateViewModels();
+            PerfTrace.Mark("flyout.items");
         }
 
         private void PopulateViewModels()
@@ -285,6 +288,7 @@ namespace TaskbarGrouper.Views
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            PerfTrace.Mark("flyout.loaded");
             var anchor = NativePositioningService.ResolveAnchor(_cursorX, _cursorY);
             var edge = anchor.Edge;
             _edge = edge;
@@ -305,6 +309,13 @@ namespace TaskbarGrouper.Views
 
             // The window stays invisible until it is at its final position (no flash at the old spot)
             Opacity = 1;
+            PerfTrace.Mark("flyout.visible");
+            if (PerfTrace.Enabled)
+            {
+                EventHandler? firstFrame = null;
+                firstFrame = (s, ev) => { CompositionTarget.Rendering -= firstFrame; PerfTrace.Mark("flyout.firstframe"); };
+                CompositionTarget.Rendering += firstFrame;
+            }
             SizeChanged += Window_SizeChanged;
             PlayEntranceAnimation(edge == NativePositioningService.TaskbarEdge.Top);
 
@@ -388,19 +399,21 @@ namespace TaskbarGrouper.Views
 
         private void PlayEntranceAnimation(bool fromTop)
         {
-            var duration = TimeSpan.FromMilliseconds(130);
+            // Short, and starting mostly opaque: the first frame already shows the apps, so the flyout reads
+            // as instant (a fade from 0 kept it invisible for most of the old 130 ms)
+            var duration = TimeSpan.FromMilliseconds(100);
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
 
             // Grow out of the taskbar side the flyout is attached to
             RootBorder.RenderTransformOrigin = fromTop ? new Point(0.5, 0.0) : new Point(0.5, 1.0);
-            double slideFrom = fromTop ? -10 : 10;
+            double slideFrom = fromTop ? -6 : 6;
 
-            var fade = new DoubleAnimation(0, 1, duration) { EasingFunction = ease };
+            var fade = new DoubleAnimation(0.65, 1, TimeSpan.FromMilliseconds(70)) { EasingFunction = ease };
             RootBorder.BeginAnimation(OpacityProperty, fade);
             TopCaretCanvas.BeginAnimation(OpacityProperty, fade);
             BottomCaretCanvas.BeginAnimation(OpacityProperty, fade);
-            PopupScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.92, 1.0, duration) { EasingFunction = ease });
-            PopupScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.92, 1.0, duration) { EasingFunction = ease });
+            PopupScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1.0, duration) { EasingFunction = ease });
+            PopupScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1.0, duration) { EasingFunction = ease });
             PopupTranslate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(slideFrom, 0, duration) { EasingFunction = ease });
         }
 

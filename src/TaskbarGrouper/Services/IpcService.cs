@@ -34,10 +34,12 @@ namespace TaskbarGrouper.Services
             {
                 if (_pipeName == null)
                 {
-                    string userSid = WindowsIdentity.GetCurrent().User?.Value ?? "DefaultUser";
-                    int sessionId = Process.GetCurrentProcess().SessionId;
+                    // Computed by every pin click's short-lived process: ProcessInfo and a concrete SHA1 class
+                    // avoid WindowsIdentity, Process and the CryptoConfig lookup, which cost several ms there
+                    string userSid = ProcessInfo.UserSid;
+                    int sessionId = ProcessInfo.SessionId;
                     string modeTag = AppInfo.IsPortableMode ? "Port" : "Inst";
-                    using (var sha = System.Security.Cryptography.SHA1.Create())
+                    using (var sha = new System.Security.Cryptography.SHA1CryptoServiceProvider())
                     {
                         byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(userSid));
                         string hex = BitConverter.ToString(hash).Replace("-", "").Substring(0, 8);
@@ -144,6 +146,7 @@ namespace TaskbarGrouper.Services
 
             if (cmd.Equals("OPEN", StringComparison.OrdinalIgnoreCase) && parts.Length >= 4)
             {
+                PerfTrace.Mark("resident.received");
                 string groupId = parts[1];
                 int.TryParse(parts[2], out int x);
                 int.TryParse(parts[3], out int y);

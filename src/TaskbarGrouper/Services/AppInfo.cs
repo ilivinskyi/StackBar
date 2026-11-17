@@ -47,10 +47,16 @@ namespace TaskbarGrouper.Services
             }
         }
 
-        /// <summary>"Portable" in StackBar-Portable.exe (built with -p:StackBarEdition=Portable), otherwise null.</summary>
-        internal static string? BuildEdition => typeof(AppInfo).Assembly
-            .GetCustomAttributes<AssemblyMetadataAttribute>()
-            .FirstOrDefault(a => a.Key == "StackBarEdition")?.Value;
+        /// <summary>
+        /// "Portable" in StackBar-Portable.exe (built with -p:StackBarEdition=Portable), otherwise null.
+        /// A compile-time constant: every pin click asks (via the pipe name), and reading the assembly
+        /// attribute by reflection cost that short-lived process measurable time.
+        /// </summary>
+#if STACKBAR_PORTABLE
+        internal const string? BuildEdition = "Portable";
+#else
+        internal const string? BuildEdition = null;
+#endif
 
         /// <summary>
         /// Portable only on an explicit signal: the portable build of the exe (works under any file name),

@@ -27,6 +27,7 @@
        under any file name. Separate output folders keep it from overwriting the normal build. -->
   <PropertyGroup Condition="'$(StackBarEdition)' == 'Portable'">
     <OutputPath>bin\Portable\$(Configuration)\</OutputPath>
+    <DefineConstants>$(DefineConstants);STACKBAR_PORTABLE</DefineConstants>
     <IntermediateOutputPath>obj\Portable\$(Configuration)\</IntermediateOutputPath>
   </PropertyGroup>
 
